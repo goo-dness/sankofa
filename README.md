@@ -212,12 +212,6 @@ uvicorn app.main:app --reload
 | Phase 5 | Community + Learning Center | Planned |
 | Phase 6 | Litsi — Natural Language Layer | Planned |
 
-### 2027
-- Deep C programming foundations
-
-### 2028+
-- Atax LLM Runtime (SL1) — built in C
-
 ---
 
 ## The Ùmà Layer
