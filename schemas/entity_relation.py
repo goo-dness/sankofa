@@ -3,11 +3,13 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from models.entity_relations import RelationshipType
+
 
 class EntityRelationsBase(BaseModel):
     from_entity_id: int
     to_entity_id: Optional[int] = None
-    relationships: Optional[str] = None
+    relationships: RelationshipType
     confidence: Optional[int] = None
     context: Optional[str] = None
 
