@@ -9,6 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 
+# Import the routers
+from routers import (
+    entities,
+    entity_names,
+    entity_people,
+    entity_relationships,
+    entity_sources,
+    relations_type,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,6 +41,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include all your API routers
+# The prefix and tags are already defined within each routers file
+app.include_router(entities.router)
+app.include_router(entity_names.router)
+app.include_router(entity_people.router)
+app.include_router(entity_relationships.router)
+app.include_router(entity_sources.router)
+app.include_router(relations_type.router)
 
 
 # root endpoints to confirm API is running

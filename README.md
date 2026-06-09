@@ -125,37 +125,39 @@ Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional a
 
 ```
 sankofa/
-├── app/
-│   ├── main.py               # FastAPI app entry point
+├── app/               # FastAPI app entry point
 │   ├── database.py           # DB connection and session
 │   ├── config.py             # Environment config
-│   │
-│   ├── knowledge/            # Core knowledge engine
-│   │   ├── models/           # SQLAlchemy models
-│   │   │   ├── __init__.py
-│   │   │   ├── entities.py
-│   │   │   ├── entity_names.py
-│   │   │   ├── entity_relationships.py
-│   │   │   ├── entity_sources.py
-│   │   │   └── entity_peoples.py
-│   │   ├── schemas/          # Pydantic schemas
-│   │   │   ├── __init__.py
-│   │   │   └── entities.py
-│   │   └── router.py         # API endpoints
-│   │
-│   ├── ingestion/            # Data pipeline scripts
-│   │   ├── who.py            # WHO GHO ingestion
-│   │   ├── ajol.py           # AJOL scraper
-│   │   ├── alphafold.py      # AlphaFold ingestion
-│   │   └── embl.py           # EMBL ingestion
-│   │
-│   └── query/                # Query engine (SL4)
-│       ├── engine.py
-│       └── router.py
+│   │           # Core knowledge engine
+├── models/           # SQLAlchemy models
+│   ├── __init__.py
+│   ├── entities.py
+│   ├── entity_names.py
+│   ├── entity_relationships.py
+│   ├── entity_sources.py
+│   └── entity_peoples.py
+├── schemas/          # Pydantic schemas
+│   ├── __init__.py
+│   └── entities.py
+└── router         # API endpoints
+│   |--- entities.py
+|   |--- entity_names.py
+|   |--- entity_people.py
+|   |--- entity_relationships.py
+|   |--- entity_sources.py
+|   |--- relations_type.py
+├── ingestion/            # Data pipeline scripts
+│   ├── who.py            # WHO GHO ingestion
+│   ├── ajol.py           # AJOL scraper
+│   ├── alphafold.py      # AlphaFold ingestion
+│   └── embl.py           # EMBL ingestion
+│   
+│   
 │
 ├── migrations/               # Alembic migrations
 ├── tests/
 ├── requirements.txt
+|--- main.py
 ├── .env.example
 └── README.md
 ```
