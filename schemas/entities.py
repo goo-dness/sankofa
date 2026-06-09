@@ -21,6 +21,6 @@ class EntityCreate(EntityBase):
 
 class EntityRead(EntityBase):
     id: int
-    create_at: datetime
+    created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

@@ -17,4 +17,4 @@ class EntityPeopleRead(EntityPeopleBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    mode_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)

@@ -7,7 +7,7 @@ from sqlalchemy import Column, DateTime, Integer, String
 from app.database import Base
 
 
-class RelationshipsType(Base):
+class RelationshipTypes(Base):
     # this line tells SQLAlchemy which table this model maps to
     __tablename__ = "relationship_types"
 

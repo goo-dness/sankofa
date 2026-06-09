@@ -11,7 +11,7 @@ class EntityRelations(Base):
     from_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
     to_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
     relationship_id = Column(
-        Integer, ForeignKey("relationships_type.id"), nullable=False
+        Integer, ForeignKey("relationship_types.id"), nullable=False
     )
     confidence = Column(Integer, nullable=False, default=1)
     context = Column(String)

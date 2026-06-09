@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 # Corrected imports based on your project structure
 from app.database import get_db
 from models.relations_type import (
-    RelationshipsType,  # Assuming 'models' is importable from sankofa root
+    RelationshipTypes,  # Assuming 'models' is importable from sankofa root
 )
 from schemas.relations_type import (  # Assuming 'schemas' is importable from sankofa root
     RelationshipsTypeCreate,
@@ -35,8 +35,8 @@ def create_relationship_type(
     """
     # Check if a relationship type with this name already exists
     db_relationship_type = (
-        db.query(RelationshipsType)
-        .filter(RelationshipsType.name == relationship_type.name)
+        db.query(RelationshipTypes)
+        .filter(RelationshipTypes.name == relationship_type.name)
         .first()
     )
     if db_relationship_type:
@@ -46,7 +46,7 @@ def create_relationship_type(
         )
 
     # Create the new relationship type
-    db_relationship_type = RelationshipsType(**relationship_type.model_dump())
+    db_relationship_type = RelationshipTypes(**relationship_type.model_dump())
     db.add(db_relationship_type)
     db.commit()
     db.refresh(db_relationship_type)
@@ -63,7 +63,7 @@ def read_relationship_types(
     - **skip**: Number of relationship types to skip (for pagination).
     - **limit**: Maximum number of relationship types to return (for pagination).
     """
-    relationship_types = db.query(RelationshipsType).offset(skip).limit(limit).all()
+    relationship_types = db.query(RelationshipTypes).offset(skip).limit(limit).all()
     return relationship_types
 
 
@@ -75,7 +75,7 @@ def read_relationship_type(type_id: int, db: Session = Depends(get_db)):
     - **type_id**: The ID of the relationship type to retrieve.
     """
     db_relationship_type = (
-        db.query(RelationshipsType).filter(RelationshipsType.id == type_id).first()
+        db.query(RelationshipTypes).filter(RelationshipTypes.id == type_id).first()
     )
     if db_relationship_type is None:
         raise HTTPException(status_code=404, detail="Relationship type not found")
@@ -90,7 +90,7 @@ def read_relationship_type_by_name(name: str, db: Session = Depends(get_db)):
     - **name**: The name of the relationship type to retrieve.
     """
     db_relationship_type = (
-        db.query(RelationshipsType).filter(RelationshipsType.name == name).first()
+        db.query(RelationshipTypes).filter(RelationshipTypes.name == name).first()
     )
     if db_relationship_type is None:
         raise HTTPException(status_code=404, detail="Relationship type not found")
@@ -113,7 +113,7 @@ def update_relationship_type(
     - **description**: New explanation (optional).
     """
     db_relationship_type = (
-        db.query(RelationshipsType).filter(RelationshipsType.id == type_id).first()
+        db.query(RelationshipTypes).filter(RelationshipTypes.id == type_id).first()
     )
     if db_relationship_type is None:
         raise HTTPException(status_code=404, detail="Relationship type not found")
@@ -121,8 +121,8 @@ def update_relationship_type(
     # Check for name conflict if name is being updated
     if relationship_type.name and relationship_type.name != db_relationship_type.name:
         existing_name_type = (
-            db.query(RelationshipsType)
-            .filter(RelationshipsType.name == relationship_type.name)
+            db.query(RelationshipTypes)
+            .filter(RelationshipTypes.name == relationship_type.name)
             .first()
         )
         if existing_name_type:
@@ -148,7 +148,7 @@ def delete_relationship_type(type_id: int, db: Session = Depends(get_db)):
     - **type_id**: The ID of the relationship type to delete.
     """
     db_relationship_type = (
-        db.query(RelationshipsType).filter(RelationshipsType.id == type_id).first()
+        db.query(RelationshipTypes).filter(RelationshipTypes.id == type_id).first()
     )
     if db_relationship_type is None:
         raise HTTPException(status_code=404, detail="Relationship type not found")

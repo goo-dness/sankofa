@@ -17,6 +17,6 @@ class EntitySourcesCreate(EntitySourcesBase):
 
 class EntitySourcesRead(EntitySourcesBase):
     id: int
-    create_at: datetime
+    created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

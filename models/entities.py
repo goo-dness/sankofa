@@ -17,7 +17,7 @@ class Entity(Base):
     expression = Column(String)
     confidence = Column(Integer, nullable=False, default=1)
     contributor = Column(String)
-    creatd_at = Column(
+    created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     updated_at = Column(
