@@ -366,4 +366,10 @@ relationship_types_data = [
         "domain": "institutional",
         "description": "The institution that provided financial support for a specific piece of research",
     },
+    {
+        "name": "measures",
+        "label": "Measures",
+        "doamin": "general",
+        "description": "Indicates that an entity (e.g., a statistic) quantifies or measures another entity(e.g, a disease, a phenomon)",
+    },
 ]
