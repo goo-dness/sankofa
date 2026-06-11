@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -16,6 +17,7 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+@contextmanager
 def get_db():
     db = SessionLocal()
     try:
