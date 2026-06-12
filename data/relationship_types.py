@@ -369,7 +369,7 @@ relationship_types_data = [
     {
         "name": "measures",
         "label": "Measures",
-        "doamin": "general",
+        "domain": "general",
         "description": "Indicates that an entity (e.g., a statistic) quantifies or measures another entity(e.g, a disease, a phenomon)",
     },
 ]
