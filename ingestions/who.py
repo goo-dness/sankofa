@@ -82,10 +82,11 @@ def extract_who_data(
 INDICATOR_MAP = {
     "MALARIA_EST_INCIDENCE": "Malaria",
     "SDGHIV": "HIV",
-    "TB_INCIDENCE": "Tuberculosis",
+    "MDG_0000000020": "Tuberculosis",
     "CM_01": "Child Mortality",
     "MDG_0000000026": "Maternal Mortality",
-    "CHOLERA_TOTAL": "Cholera",
+    # "CHOLERA_TOTAL": "Cholera",
+    "MDG_0000000017": "Pneumonia",
 }
 
 

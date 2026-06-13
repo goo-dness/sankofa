@@ -14,10 +14,11 @@ Base.metadata.create_all(bind=engine)
 WHO_INDICATOR_CODES_TO_INGEST = [
     "MALARIA_EST_INCIDENCE",
     "SDGHIV",
-    "TB_INCIDENCE",
+    "MDG_0000000020",
     "CM_01",  # Child mortality
     "MDG_0000000026",  # Maternal mortality rate
     # "CHOLERA_TOTAL",
+    "MDG_0000000017",
 ]
 AFRICAN_COUNTRY_CODES_TO_INGEST = [
     "NGA",
@@ -52,17 +53,17 @@ def seed_relationship_types():
             print("Relationship types seeded successfully.")
         except Exception as e:
             db.rollback()
-            print(f"Error seeding relationship types: {e}")
+            print(f" Error seeding relationship types: {e}")
 
 
 def run_who_ingestion():
-    print("Starting WHO GHO Insgestion Pipeline...")
+    print("Starting WHO GHO Ingestion Pipeline...")
 
     for indicator_code in WHO_INDICATOR_CODES_TO_INGEST:
-        print(f"Processing indicator: {indicator_code}")
+        print(f" Processing indicator: {indicator_code}")
 
         # --- Step 1: Extract data ---
-        print(f"Extracting raw data: {indicator_code} ...")
+        print(f" Extracting raw data: {indicator_code} ...")
         raw_who_data = []
         try:
             raw_who_data = extract_who_data(
@@ -71,16 +72,16 @@ def run_who_ingestion():
             print(f"Extracted {len(raw_who_data)} rows for {indicator_code}.")
             if len(raw_who_data) == 0:
                 print(
-                    f"No data extracted fpr {indicator_code}, skipping transformation and load."
+                    f" No data extracted for {indicator_code}, skipping transformation and load."
                 )
                 continue
         except Exception as e:
-            print(f"Error during extraction for {indicator_code}:", {e})
+            print(f" Error during extraction for {indicator_code}:", {e})
             continue
 
         # --- Step 2: Transform data ---
         print(
-            f"Transforming data for {indicator_code} into entities and relationships..."
+            f" Transforming data for {indicator_code} into entities and relationships..."
         )
         transformed_entities = []
         transformed_relationships = []
