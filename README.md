@@ -100,7 +100,7 @@ Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional a
 | Source | Layer | Type |
 |---|---|---|
 | WHO Global Health Observatory | Epidemiological | REST API |
-| AJOL (African Journals Online) | Research | Scraping |
+| OpenAlex | Research | API |
 | AlphaFold | Molecular / Protein | REST API |
 | EMBL | Genetic / Sequence | REST API |
 
