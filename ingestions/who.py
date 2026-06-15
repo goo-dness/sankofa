@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 import httpx
 from sqlalchemy.orm import Session
 
-# Corrected model imports based on your project structure
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
