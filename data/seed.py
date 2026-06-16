@@ -2,11 +2,11 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ingestions.openalex import DISEASE_VOCABULARY, run_openalex_ingestion
 from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
 from data.relationship_types import relationship_types_data
+from ingestions.openalex import DISEASE_VOCABULARY, run_openalex_ingestion
 from ingestions.who import extract_who_data, load_to_database, transform_to_entities
 from models.relations_type import RelationshipTypes
 
