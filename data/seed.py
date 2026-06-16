@@ -2,6 +2,7 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ingestions.openalex import DISEASE_VOCABULARY, run_openalex_ingestion
 from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
@@ -110,6 +111,14 @@ def run_who_ingestion():
     print("WHO GHO ingestion pipeline finished.")
 
 
+def run_openalex():
+    print("Starting OpenAlex ingestion pipeline...")
+    for disease_name in DISEASE_VOCABULARY:
+        run_openalex_ingestion(disease_name)
+    print("OpenAlex ingestion pipeline finished.")
+
+
 if __name__ == "__main__":
     seed_relationship_types()
     run_who_ingestion()
+    run_openalex()
