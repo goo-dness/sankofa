@@ -1,3 +1,5 @@
+import time
+
 import httpx
 import requests
 from sqlalchemy.orm import Session
@@ -315,16 +317,17 @@ def extract_region(authorships):
 # ---Stage 1: Fetch raw data from openalex
 def extract_openalex_data(disease_name):
     # Build the filter string OpenAlex expects
-    filter_string = (
-        f"title.search:{disease_name}.authorships.institutions.continent:Africa"
-        "open_access.is_oa:true"
-        "publication_year:>2009"
-    )
-
+    filter_conditions = [
+        f"title.search:{disease_name}",
+        "authorships.institutions.continent:Africa",
+        "open_access.is_oa:true",
+        "publication_year:>2009",
+    ]
+    filter_string = ",".join(filter_conditions)
     request_params = {
-        "$filter": filter_string,
-        "$per_page": PER_PAGE,
-        "$cursor": "*",  # Tells Openalex to start from beginning
+        "filter": filter_string,
+        "per_page": PER_PAGE,
+        "cursor": "*",  # Tells Openalex to start from beginning
     }
 
     raw_records = []
@@ -575,3 +578,31 @@ def load_to_database(entities, relationships, sources, db_session):
         db_session.rollback()
     finally:
         db_session.close()
+
+
+# ORCHESTRATOR: run_openalex_ingestion
+# Calls all three stages in order for one disease
+def run_openalex_ingestion(disease_name):
+    print(f"Starting OpenAlex ingestion for: {disease_name}")
+
+    raw_records = extract_openalex_data(disease_name)
+
+    if not raw_records:
+        # If no record exists abort the operation
+        print(f"No records found for {disease_name}, aborting")
+        return
+
+    entities, relationships, sources = transform_to_entities(raw_records, disease_name)
+    if entities is None or relationships is None or sources is None:
+        print(f"Error: Transform stage returned None for {disease_name}")
+        return
+    db_session = SessionLocal()
+
+    try:
+        load_to_database(entities, relationships, sources, db_session)
+    except Exception as e:
+        print(f"Error during load stage; {e}")
+    finally:
+        db_session.close()
+
+    print(f"Integration complete for; {disease_name}")
