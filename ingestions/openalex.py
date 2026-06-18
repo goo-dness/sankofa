@@ -1,3 +1,6 @@
+import time
+from typing import Any, Dict, List, Tuple
+
 import httpx
 import requests
 from sqlalchemy.orm import Session
@@ -265,21 +268,21 @@ INDIGENOUS_KEYWORDS = [
 
 
 # Openalex stores abstracts as word-to-positions mapping, I rebuild the original sentence from that mapping
-def reconstruct_abstract(inverted_index):
-    if not inverted_index:
+def reconstruct_abstract(abstract_inverted_index: Dict[str, List]) -> str:
+    if not abstract_inverted_index:
         return ""
 
     position_to_word = {}
-    for word, positions in inverted_index.items():
+    for word, positions in abstract_inverted_index.items():
         for position in positions:
-            position[word] = position_to_word
+            position_to_word[position] = word
 
     sorted_words = [position_to_word[pos] for pos in sorted(position_to_word.keys())]
-    return "".join(sorted_words)
+    return " ".join(sorted_words)
 
 
 # Citation is my proxy for scientific validation
-def determine_confidence(cited_by_count):
+def determine_confidence(cited_by_count: int) -> int:
     if cited_by_count >= 50:
         return 3  # Established confidence tier
     elif cited_by_count >= 10:
@@ -289,7 +292,7 @@ def determine_confidence(cited_by_count):
 
 
 # Classify what kind of knowledge this paper represnets
-def determine_entity_type(abstract_text):
+def determine_entity_type(abstract_text: str) -> str:
     abstract_text_lower = abstract_text.lower()
 
     for keyword in INDIGENOUS_KEYWORDS:
@@ -304,30 +307,33 @@ def determine_entity_type(abstract_text):
 # Walk the author institutions to find country code
 
 
-def extract_region(authorships):
+def extract_region(authorships: List[Dict[str, Any]]) -> str:
     for authorship in authorships:
-        for institution in authorship["institutions"]:
-            if institution["continent"] == "Africa":
-                return institution["country_code"]
+        for institution in authorship.get("institutions", []):
+            # Use .get() to safely access 'continet'
+            continent = institution.get("continent")
+            if continent == "Africa":
+                return institution.get("country_code", "AFRICA")
     return "AFRICA"  # Fallback if no specific country code found
 
 
 # ---Stage 1: Fetch raw data from openalex
-def extract_openalex_data(disease_name):
+def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
     # Build the filter string OpenAlex expects
-    filter_string = (
-        f"title.search:{disease_name}.authorships.institutions.continent:Africa"
-        "open_access.is_oa:true"
-        "publication_year:>2009"
-    )
-
+    filter_conditions = [
+        f"title.search:{disease_name}",
+        "authorships.institutions.continent:Africa",
+        "open_access.is_oa:true",
+        "publication_year:>2009",
+    ]
+    filter_string = ",".join(filter_conditions)
     request_params = {
-        "$filter": filter_string,
-        "$per_page": PER_PAGE,
-        "$cursor": "*",  # Tells Openalex to start from beginning
+        "filter": filter_string,
+        "per_page": PER_PAGE,
+        "cursor": "*",  # Tells Openalex to start from beginning
     }
 
-    raw_records = []
+    raw_records: List[Dict[str, Any]] = []
 
     while True:
         print(f"Making GET  request to {OPENALEX_URL} with params: {request_params}")
@@ -363,86 +369,106 @@ def extract_openalex_data(disease_name):
 
 
 # ---Stage 2: Convert raw OpenAlex records into Sankofa entity dicts
-def transform_to_entities(raw_records, disease_name):
-    entities = []
-    relationships = []
-    sources = []
-
+def transform(
+    raw_records: List[Dict[str, Any]], disease_name: str
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    entities: List[Dict[str, Any]] = []
+    relationships: List[Dict[str, Any]] = []
+    sources: List[Dict[str, Any]] = []
+    # Keep track of added regions to avoid duplicates in the entities list
+    added_regions = set()
     for paper in raw_records:
-        # Derive all fields we need
-        abstract_text = reconstruct_abstract(paper.get("inverted_index", {}))
-        confidence = determine_confidence(paper.get("cited_by_count", 0))
+        try:
+            # Derive all fields we need
+            abstract_text = reconstruct_abstract(paper.get("inverted_index", {}))
+            confidence = determine_confidence(paper.get("cited_by_count", 0))
 
-        entity_type = determine_entity_type(abstract_text)
-        region = extract_region(paper.ge("authorships", []))
+            entity_type = determine_entity_type(abstract_text)
+            region = extract_region(paper.get("authorships", []))
 
-        disease_entity_dict = {
-            "name": disease_name,
-            "domain": "healthcare",
-            "entity_type": entity_type,
-            "region": region,
-            "expression": paper["title"],
-            "confidence": confidence,
-            "contributor": "OpenAlex",
-        }
-        entities.append(disease_entity_dict)
-
-        # Build source records
-        # Papers are sources in Sankofa not entities
-        source_dict = {
-            "entity_name": disease_name,
-            "source_name": "OpenAlex",
-            "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
-        }
-        # Add source_dict to sources
-        sources.append(source_dict)
-
-        # Build prevalent_in relationship
-        prevalent_relationships_dict = {
-            "from_entity_name": disease_name,
-            "to_entity_name": region,
-            "relationship": "prevalent_in",
-            "confidence": confidence,
-            "context": paper.get("title"),
-        }
-        relationships.append(prevalent_relationships_dict)
-
-        # check if paper mentions treatment
-        found_treatments = []
-        # Convert abstract-text to lower case
-        abstract_text_lower = abstract_text.lower()
-
-        for treatment in TREATMENT_VOCABULARY:
-            if treatment in abstract_text_lower:
-                found_treatments.append(treatment)
-
-        # Build entity and relationship per found treatment
-        for actual_treatment in found_treatments:
-            treatment_entity_dict = {
-                "name": actual_treatment,
+            disease_entity_dict = {
+                "name": disease_name,
                 "domain": "healthcare",
-                "entity_type": "Clinical",
+                "entity_type": entity_type,
                 "region": region,
-                "expression": paper.get("title"),
+                "expression": paper["title"],
                 "confidence": confidence,
                 "contributor": "OpenAlex",
             }
-            entities.append(treatment_entity_dict)
+            entities.append(disease_entity_dict)
+            # --- Build region entity ---
+            if region not in added_regions:
+                region_entity_type = "Continent" if region == "AFRICA" else "Country"
+                region_entity_dict: Dict[str, Any] = {
+                    "name": region,
+                    "domain": "geography",
+                    "entity_type": region_entity_type,
+                    "region": region,
+                    "expression": region,
+                    "confidence": 3,
+                    "contributor": "OpenAlex",
+                }
+                entities.append(region_entity_dict)
+                added_regions.add(region)
+            # Build source records
+            # Papers are sources in Sankofa not entities
+            source_dict = {
+                "entity_name": disease_name,
+                "source_name": "OpenAlex",
+                "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+            }
+            # Add source_dict to sources
+            sources.append(source_dict)
 
-            treats_relationship_dict = {
-                "from_entity_name": actual_treatment,
-                "to_entity_name": disease_name,
-                "relationship": "treats",
+            # Build prevalent_in relationship
+            prevalent_relationships_dict = {
+                "from_entity_name": disease_name,
+                "to_entity_name": region,
+                "relationship": "prevalent_in",
                 "confidence": confidence,
                 "context": paper.get("title"),
             }
-            relationships.append(treats_relationship_dict)
+            relationships.append(prevalent_relationships_dict)
 
-        return entities, relationships, sources
+            # check if paper mentions treatment
+            found_treatments = []
+            # Convert abstract-text to lower case
+            abstract_text_lower = abstract_text.lower()
+
+            for treatment in TREATMENT_VOCABULARY.get(disease_name, []):
+                if treatment in abstract_text_lower:
+                    found_treatments.append(treatment)
+
+            # Build entity and relationship per found treatment
+            for actual_treatment in found_treatments:
+                treatment_entity_dict = {
+                    "name": actual_treatment,
+                    "domain": "healthcare",
+                    "entity_type": "Clinical",
+                    "region": region,
+                    "expression": paper.get("title"),
+                    "confidence": confidence,
+                    "contributor": "OpenAlex",
+                }
+                entities.append(treatment_entity_dict)
+
+                treats_relationship_dict = {
+                    "from_entity_name": actual_treatment,
+                    "to_entity_name": disease_name,
+                    "relationship": "treats",
+                    "confidence": confidence,
+                    "context": paper.get("title"),
+                }
+                relationships.append(treats_relationship_dict)
+        except Exception as e:
+            paper_id = paper.get("id", "N/A")
+            print(f"Warning: Skipping paper ID: {paper_id}")
+            continue
+    return entities, relationships, sources
 
 
 # Upsert everything into PostgreSQL
-def load_to_database(entities, relationships, sources, db_session):
+def load(entities, relationships, sources, db_session):
     # THis map lets us link relationships without extra DB queries
     entity_name_to_id = {}
 
@@ -521,7 +547,7 @@ def load_to_database(entities, relationships, sources, db_session):
                 )
         # ---Stae 4: Upsert Relationships---
         for relationship_dict in relationships:
-            from_entity_name = relationship_dict["fro_entity_name"]
+            from_entity_name = relationship_dict["from_entity_name"]
             to_entity_name = relationship_dict["to_entity_name"]
             relationship_name = relationship_dict["relationship"]
 
@@ -575,3 +601,31 @@ def load_to_database(entities, relationships, sources, db_session):
         db_session.rollback()
     finally:
         db_session.close()
+
+
+# ORCHESTRATOR: run_openalex_ingestion
+# Calls all three stages in order for one disease
+def run_openalex_ingestion(disease_name):
+    print(f"Starting OpenAlex ingestion for: {disease_name}")
+
+    raw_records = extract_openalex_data(disease_name)
+
+    if not raw_records:
+        # If no record exists abort the operation
+        print(f"No records found for {disease_name}, aborting")
+        return
+
+    entities, relationships, sources = transform(raw_records, disease_name)
+    if entities is None or relationships is None or sources is None:
+        print(f"Error: Transform stage returned None for {disease_name}")
+        return
+    db_session = SessionLocal()
+
+    try:
+        load(entities, relationships, sources, db_session)
+    except Exception as e:
+        print(f"Error during load stage; {e}")
+    finally:
+        db_session.close()
+
+    print(f"Integration complete for:  {disease_name}")
