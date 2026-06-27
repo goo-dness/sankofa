@@ -14,6 +14,7 @@ class EntityRelations(Base):
         Integer, ForeignKey("relationship_types.id"), nullable=False
     )
     confidence = Column(Integer, nullable=False, default=1)
+    evidence_count = Column(Integer, nullable=False, default=1)
     context = Column(String)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -10,6 +10,7 @@ from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
+from models.relationship_sources import RelationshipSource
 
 # CONSTANTS
 OPENALEX_URL = "https://api.openalex.org/works"
@@ -427,6 +428,7 @@ def transform(
                 "relationship": "prevalent_in",
                 "confidence": confidence,
                 "context": paper.get("title"),
+                "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
             }
             relationships.append(prevalent_relationships_dict)
 
@@ -458,6 +460,9 @@ def transform(
                     "relationship": "treats",
                     "confidence": confidence,
                     "context": paper.get("title"),
+                    "source_url": paper.get("doi")
+                    if paper.get("doi")
+                    else paper.get("id"),
                 }
                 relationships.append(treats_relationship_dict)
         except Exception as e:
@@ -499,13 +504,16 @@ def load(entities, relationships, sources, db_session):
                 .filter_by(name=entity_name, domain=domain)
                 .first()
             )
-            # Check for duplicate, if there is duplicate skip and move on
+            # Check for duplicate, and compare
             if existing_entity:
-                print(f"Skipping duplicate entity: {entity_name}")
+                if entity_dict["confidence"] > existing_entity.confidence:
+                    existing_entity.confidence = entity_dict["confidence"]
+                    print(f"Upgrade confidence for entity: {entity_name}")
                 entity_name_to_id[entity_name] = existing_entity.id
+
             else:
                 # Create a new entity
-                new_entity = Entity(**entity_dict)
+                new_entity = Entity(**entity_dict, evidence_count=1)
                 # Add the new entity to database
                 db_session.add(new_entity)
                 db_session.flush()  # get the new id before moving on
@@ -538,6 +546,9 @@ def load(entities, relationships, sources, db_session):
                 )
                 # Add to db
                 db_session.add(new_source)
+
+                entity = db_session.query(Entity).filter_by(id=entity_id).first()
+                entity.evidence_count += 1
                 print(
                     f"Added new source for {entity_name}: {source_dict['source_url']}"
                 )
@@ -574,9 +585,40 @@ def load(entities, relationships, sources, db_session):
 
             # If it eixsts skip
             if existing_relationship:
-                print(
-                    f"Skipping duplicate relationship: {from_entity_name} -> {to_entity_name} -> {relationship_name}"
+                existing_rel_source = (
+                    db_session.query(RelationshipSource)
+                    .filter_by(
+                        relationship_id=existing_relationship.id,
+                        source_url=relationship_dict["source_url"],
+                    )
+                    .first()
                 )
+                if not existing_rel_source:
+                    existing_relationship.evidence_count += 1
+
+                    if (
+                        relationship_dict["confidence"]
+                        > existing_relationship.confidence
+                    ):
+                        existing_relationship.confidence = relationship_dict[
+                            "confidence"
+                        ]
+
+                    new_rel_source = RelationshipSource(
+                        relationship_id=existing_relationship.id,
+                        source_name="OpenAlex",
+                        source_url=relationship_dict["source_url"],
+                        confidence=relationship_dict["confidence"],
+                        context=relationship_dict["context"],
+                    )
+                    db_session.add(new_rel_source)
+                    print(
+                        f"Stengthened relationship: {from_entity_name} -> {to_entity_name} -> {relationship_name}"
+                    )
+                else:
+                    print(
+                        f"Already recorded this source for relationship: {from_entity_name} -> {to_entity_name} -> {relationship_name}"
+                    )
             else:
                 # If it doesn`t exist create a new one
                 new_relationship = EntityRelations(
@@ -585,9 +627,19 @@ def load(entities, relationships, sources, db_session):
                     relationship_id=relationship_type_id,
                     confidence=relationship_dict["confidence"],
                     context=relationship_dict["context"],
+                    evidence_count=1,
                 )
                 # Add the new relationship to the database
                 db_session.add(new_relationship)
+                db_session.flush()
+                new_rel_source = RelationshipSource(
+                    relationship_id=new_relationship.id,
+                    source_name="OpenAlex",
+                    source_url=relationship_dict["source_url"],
+                    confidence=relationship_dict["confidence"],
+                    context=relationship_dict["context"],
+                )
+                db_session.add(new_rel_source)
                 print(
                     f"Added new relationship: {from_entity_name} -> {to_entity_name} -> {relationship_name}"
                 )
