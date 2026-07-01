@@ -322,7 +322,7 @@ def extract_region(authorships: List[Dict[str, Any]]) -> str:
 def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
     # Build the filter string OpenAlex expects
     filter_conditions = [
-        f"title.search:{disease_name}",
+        f"title.search.exact:{disease_name}",
         "authorships.institutions.continent:Africa",
         "open_access.is_oa:true",
         "publication_year:>2009",
@@ -332,6 +332,7 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
         "filter": filter_string,
         "per_page": PER_PAGE,
         "cursor": "*",  # Tells Openalex to start from beginning
+        "api_key": "LavCfEBQRCydbMVkEPaZzR",
     }
 
     raw_records: List[Dict[str, Any]] = []

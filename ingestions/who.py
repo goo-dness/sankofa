@@ -8,6 +8,7 @@ from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
+from models.relationship_sources import RelationshipSource
 
 WHO_BASE_URL = "https://ghoapi.azureedge.net/api/"
 DEFAULT_PAGE_SIZE = 1000  # WHO API often uses a default page size for $top
@@ -91,7 +92,7 @@ INDICATOR_MAP = {
 
 def transform_to_entities(
     raw_rows: List[Dict[str, Any]], indicator_code: str
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Transforms raw WHO GHO data rows into a list of entities and relationships.
 
@@ -106,23 +107,22 @@ def transform_to_entities(
     """
     entities = []
     relationships = []
+    sources = []
 
-    # Use set to check for duplicate disease names
     unique_disease_names = set()
+    added_regions = set()
 
-    # Use the INDICATOR_MAP to get the disease name, default to Unknown Disease if the indicator_code is not found
     disease_name = INDICATOR_MAP.get(indicator_code, "Unknown Disease")
-
-    # Create a human readable prefix for the statistic's entity name by replacing underscore with space
     statistic_description_prefix = indicator_code.replace("_", " ").title()
 
-    # Loop through each raw data dictionary
     for row in raw_rows:
         spatial_dim = row.get("SpatialDim")
         time_dim = row.get("TimeDim")
         numeric_value = row.get("NumericValue")
 
-        # --- 1. Create Disease Entity ---
+        source_url = f"{WHO_BASE_URL}{indicator_code}?SpatialDim={spatial_dim}&TimeDim={time_dim}"
+
+        # --- 1. Disease entity (no source_url inside the entity dict) ---
         if disease_name not in unique_disease_names:
             disease_entity = {
                 "name": disease_name,
@@ -134,7 +134,15 @@ def transform_to_entities(
             entities.append(disease_entity)
             unique_disease_names.add(disease_name)
 
-        # --- 2. Create Statistic Entity ---
+            sources.append(
+                {
+                    "entity_name": disease_name,
+                    "source_name": "WHO GHO",
+                    "source_url": source_url,
+                }
+            )
+
+            # --- 2. Statistic entity ---
         statistic_entity_name = (
             f"{statistic_description_prefix} {spatial_dim} {time_dim}"
         )
@@ -142,7 +150,7 @@ def transform_to_entities(
         statistic_entity = {
             "name": statistic_entity_name,
             "domain": "epidemiology",
-            "entity_type": "prevalence_statistic",  # Corrected typo from statistics
+            "entity_type": "prevalence_statistic",
             "region": spatial_dim,
             "expression": str(numeric_value) if numeric_value is not None else None,
             "confidence": 3,
@@ -150,32 +158,65 @@ def transform_to_entities(
         }
         entities.append(statistic_entity)
 
-        # --- 3. Create Relationships ---
-        # Relationship 1: statistic -> measures -> disease
+        sources.append(
+            {
+                "entity_name": statistic_entity_name,
+                "source_name": "WHO GHO",
+                "source_url": source_url,
+            }
+        )
+
+        # --- 3. Region entity, built here now, not inside load() ---
+        if spatial_dim not in added_regions:
+            region_entity = {
+                "name": spatial_dim,
+                "domain": "geography",
+                "entity_type": "region",
+                "confidence": 3,
+                "contributor": "WHO GHO (implicit region)",
+            }
+            entities.append(region_entity)
+            added_regions.add(spatial_dim)
+
+            sources.append(
+                {
+                    "entity_name": spatial_dim,
+                    "source_name": "WHO GHO",
+                    "source_url": source_url,
+                }
+            )
+
+        # --- 4. Relationships ---
         relationships.append(
             {
                 "from_entity_name": statistic_entity_name,
                 "to_entity_name": disease_name,
                 "relationship_name": "measures",
                 "confidence": 3,
-                "context": f"Year: {time_dim}, Source: WHO GHO",  # Consistent context string
+                "context": f"Year: {time_dim},Source: WHO GHO",
+                "source_url": source_url,
             }
         )
-        # Relationship 2: statistic -> prevalent_in -> region (SpatialDim as entity name)
+
         relationships.append(
             {
                 "from_entity_name": statistic_entity_name,
-                "to_entity_name": spatial_dim,  # Country code can act as a region entity name
+                "to_entity_name": spatial_dim,
                 "relationship_name": "prevalent_in",
                 "confidence": 3,
-                "context": f"Year: {time_dim}, Source: WHO GHO",  # Consistent context string
+                "context": f"Year: {time_dim}, Source: WHO GHO",
+                "source_url": source_url,
             }
         )
-    return entities, relationships
+
+    return entities, relationships, sources
 
 
 def load_to_database(
-    db: Session, entities: List[Dict[str, Any]], relationships: List[Dict[str, Any]]
+    db: Session,
+    entities: List[Dict[str, Any]],
+    relationships: List[Dict[str, Any]],
+    sources: List[Dict[str, Any]],
 ):
     """
     Loads entities and relationships into the database, handling uniqueness.
@@ -189,116 +230,90 @@ def load_to_database(
     relationship_type_name_to_id = {}
 
     try:
-        # --- Pre-load Relationship Types ---
+        # --- Pre-load relationship types ---
         db_relationship_types = db.query(RelationshipTypes).all()
-        for rel_type_obj in db_relationship_types:  # Renamed loop variable
+        for rel_type_obj in db_relationship_types:
             relationship_type_name_to_id[rel_type_obj.name] = rel_type_obj.id
 
-        if "measures" not in relationship_type_name_to_id:
-            print(
-                "Warning: 'measures' relationship type not found in database. Please seed your relationship_types table."
-            )
-        if (
-            "prevalent_in" not in relationship_type_name_to_id
-        ):  # Check for prevalent_in too
-            print(
-                "Warning: 'prevalent_in' relationship type not found in database. Please seed your relationship_types table."
-            )
-
-        # --- Process Explicit Entities (Disease, Statistic) & Their Sources ---
+        # --- Upsert entities ---
         for entity_dict in entities:
             entity_name = entity_dict["name"]
-            # Check if the entity already exists in the database
+
             existing_entity = (
                 db.query(Entity).filter(Entity.name == entity_name).first()
             )
 
             if existing_entity:
-                entity_name_to_id[entity_name] = (
-                    existing_entity.id
-                )  # Use entity_name for consistency
+                if entity_dict["confidence"] > existing_entity.confidence:
+                    existing_entity.confidence = entity_dict["confidence"]
+                    print(f"Upgraded confidence for entity: {entity_name}")
+                entity_name_to_id[entity_name] = existing_entity.id
             else:
-                new_entity = Entity(**entity_dict)
+                new_entity = Entity(**entity_dict, evidence_count=1)
                 db.add(new_entity)
-                db.flush()  # Get ID for new_entity before creating source
+                db.flush()
                 entity_name_to_id[new_entity.name] = new_entity.id
+                print(f"Added new entity: {entity_name}")
 
-                # Create EntitySource for this NEW Disease/Statistic entity
+        # --- Upsert sources, strengthening evidence_count on genuinely new evidence ---
+        for source_dict in sources:
+            entity_name = source_dict["entity_name"]
+            entity_id = entity_name_to_id.get(entity_name)
+
+            if not entity_id:
+                print(
+                    f"Warning: Entity ID not found for source entity {entity_name}, skipping source"
+                )
+                continue
+
+            existing_source = (
+                db.query(EntitySource)
+                .filter_by(entity_id=entity_id, source_url=source_dict["source_url"])
+                .first()
+            )
+
+            if not existing_source:
                 new_source = EntitySource(
-                    entity_id=new_entity.id,
-                    source_name="WHO GHO",
-                    source_url=WHO_BASE_URL,
+                    entity_id=entity_id,
+                    source_name=source_dict["source_name"],
+                    source_url=source_dict["source_url"],
                     access_at=datetime.now(timezone.utc),
                 )
                 db.add(new_source)
 
-        # --- Resolve & Create Implicit Region Entities & Their Sources ---
-        # This MUST happen after explicit entities, but before relationships, to ensure region IDs exist.
-        for (
-            relationship_dict_candidate
-        ) in relationships:  # Iterate through relationships to find implicit regions
-            if relationship_dict_candidate["relationship_name"] == "prevalent_in":
-                region_name = relationship_dict_candidate["to_entity_name"]
-
-                if (
-                    region_name not in entity_name_to_id
-                ):  # Check if it's already an explicit entity
-                    # Check if region entity already exists in database (name and entity_type="region")
-                    existing_region = (
-                        db.query(Entity)
-                        .filter(
-                            Entity.name == region_name, Entity.entity_type == "region"
-                        )
-                        .first()
+                entity = db.query(Entity).filter_by(id=entity_id).first()
+                if entity:
+                    entity.evidence_count += 1  # type: ignore[assignment]
+                    print(
+                        f"Added new source for {entity_name}: {source_dict['source_url']}"
                     )
+            else:
+                print(
+                    f"Skipping duplicate source for {entity_name}: {source_dict['source_url']}"
+                )
 
-                    if existing_region:
-                        entity_name_to_id[region_name] = existing_region.id
-                    else:
-                        new_region = Entity(
-                            name=region_name,
-                            domain="geography",
-                            entity_type="region",
-                            confidence=3,
-                            contributor="WHO GHO (implicit region)",
-                        )
-                        db.add(new_region)
-                        db.flush()  # Get ID for new_region_entity before creating source
-                        entity_name_to_id[new_region.name] = new_region.id
-
-                        # Create EntitySource for this NEW Region entity
-                        new_region_source = EntitySource(
-                            entity_id=new_region.id,
-                            source_name="WHO GHO",
-                            source_url=WHO_BASE_URL,
-                            access_at=datetime.now(timezone.utc),
-                        )
-                        db.add(new_region_source)
-
-        # --- Process ALL Relationships ---
+        # --- Upsert relationships ---
         for relationship_dict in relationships:
             from_entity_name = relationship_dict["from_entity_name"]
             to_entity_name = relationship_dict["to_entity_name"]
             relationship_name = relationship_dict["relationship_name"]
 
-            # Resolve the actual database IDs using the mappings
             from_entity_id = entity_name_to_id.get(from_entity_name)
             to_entity_id = entity_name_to_id.get(to_entity_name)
             relationship_type_id = relationship_type_name_to_id.get(relationship_name)
 
-            # Validate that all required IDs were found
             if (
                 from_entity_id is None
                 or to_entity_id is None
                 or relationship_type_id is None
             ):
                 print(
-                    f"Warning: Skipping relationship due to unresolved entity or relationship type ID: {relationship_dict}"
+                    f"Warning: Skipping relationship due to unresolved IDs: "
+                    f"{from_entity_name} -> {to_entity_name} -> {relationship_name}."
                 )
-                continue  # Skip to the next relationship
+                continue
 
-            # Check if the exact relationship already exists in the database
-            existing_relationship = (  # Renamed variable for clarity
+            existing_relationship = (
                 db.query(EntityRelations)
                 .filter(
                     EntityRelations.from_entity_id == from_entity_id,
@@ -309,23 +324,71 @@ def load_to_database(
             )
 
             if existing_relationship:
-                print(
-                    f"Debug: Skipping duplicate relationship: {relationship_dict}"
-                )  # Changed to Debug message
+                existing_rel_source = (
+                    db.query(RelationshipSource)
+                    .filter_by(
+                        relationship_id=existing_relationship.id,
+                        source_url=relationship_dict["source_url"],
+                    )
+                    .first()
+                )
+
+                if not existing_rel_source:
+                    existing_relationship.evidence_count += 1  # type: ignore[assignment]
+
+                    if (
+                        relationship_dict["confidence"]
+                        > existing_relationship.confidence
+                    ):
+                        existing_relationship.confidence = relationship_dict[
+                            "confidence"
+                        ]
+
+                    new_rel_source = RelationshipSource(
+                        relationship_id=existing_relationship.id,
+                        source_name="WHO GHO",
+                        source_url=relationship_dict["source_url"],
+                        confidence=relationship_dict["confidence"],
+                        context=relationship_dict["context"],
+                    )
+                    db.add(new_rel_source)
+                    print(
+                        f"Strengthened relationship: {from_entity_name} -> "
+                        f"{to_entity_name} -> {relationship_name}"
+                    )
+                else:
+                    print(
+                        f"Already recorded this source for relationship: "
+                        f"{from_entity_name} -> {to_entity_name} -> {relationship_name}"
+                    )
+
             else:
-                # Relationship does not exist, create new relationship
                 new_relationship = EntityRelations(
                     from_entity_id=from_entity_id,
                     to_entity_id=to_entity_id,
                     relationship_id=relationship_type_id,
-                    confidence=relationship_dict.get(
-                        "confidence", 3
-                    ),  # Use 3 as default confidence
+                    confidence=relationship_dict.get("confidence"),
                     context=relationship_dict.get("context"),
+                    evidence_count=1,
                 )
                 db.add(new_relationship)
+                db.flush()
 
-        db.commit()  # Final commit for all operations in this try block
+                new_rel_source = RelationshipSource(
+                    relationship_id=new_relationship.id,
+                    source_name="WHO GHO",
+                    source_url=relationship_dict["source_url"],
+                    confidence=relationship_dict["confidence"],
+                    context=relationship_dict["context"],
+                )
+                db.add(new_rel_source)
+                print(
+                    f"Added new relationship: {from_entity_name} -> "
+                    f"{to_entity_name} -> {relationship_name}"
+                )
+
+        db.commit()
+        print("Load complete")
 
     except Exception as e:
         print(f"An error occurred during data loading: {e}")

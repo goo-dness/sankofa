@@ -87,8 +87,8 @@ def run_who_ingestion():
         transformed_entities = []
         transformed_relationships = []
         try:
-            transformed_entities, transformed_relationships = transform_to_entities(
-                raw_who_data, indicator_code
+            transformed_entities, transformed_relationships, transformed_sources = (
+                transform_to_entities(raw_who_data, indicator_code)
             )
             print(
                 f"Transformed into {len(transformed_entities)} entities and {len(transformed_relationships)} relationships"
@@ -103,7 +103,10 @@ def run_who_ingestion():
             try:
                 # This is the line to check
                 load_to_database(
-                    db_session, transformed_entities, transformed_relationships
+                    db_session,
+                    transformed_entities,
+                    transformed_relationships,
+                    transformed_sources,
                 )
                 print(f"  Successfully loaded data for {indicator_code} to database.")
             except Exception as e:
