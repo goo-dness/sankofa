@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 import httpx
 from sqlalchemy.orm import Session
 
+from app.http_utils import get_with_retry
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
@@ -44,9 +45,12 @@ def extract_who_data(
         }
         try:
             # Use params dictionary directly for query parameters
-            response = httpx.get(
-                f"{WHO_BASE_URL}{indicator_code}", params=params, timeout=30.0
+            response = get_with_retry(
+                f"{WHO_BASE_URL}{indicator_code}", params, context_label=indicator_code
             )
+            if response is None:
+                print(f"Could not fetch results for {indicator_code}, skipping.")
+                continue
             response.raise_for_status()  # Raise an exception for HTTP errors
 
             # Parse the JSON response

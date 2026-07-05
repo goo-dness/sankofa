@@ -6,6 +6,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.http_utils import get_with_retry
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
@@ -339,7 +340,12 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
 
     while True:
         print(f"Making GET  request to {OPENALEX_URL} with params: {request_params}")
-        response = requests.get(OPENALEX_URL, params=request_params, timeout=30.0)
+        response = get_with_retry(
+            OPENALEX_URL, request_params, context_label=disease_name
+        )
+        if response is None:
+            print(f"Could not fetch results for {disease_name}, skipping disease")
+            continue
         # Raise an exception for HTTP errors
         if response.status_code != 200:
             print(
