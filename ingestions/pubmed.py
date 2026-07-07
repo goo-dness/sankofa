@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
+import requests
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -611,8 +612,8 @@ def load(entities, relationships, sources, db_session):
 
         # Step 4: Upsert Relationships and create their sources
         for relationship_dict in relationships:
-            from_entity_name = relationship_dict["from-entity_name"]
-            to_entity_name = relationship_dict["to_entity_dict"]
+            from_entity_name = relationship_dict["from_entity_name"]
+            to_entity_name = relationship_dict["to_entity_name"]
             relationship_type_name = relationship_dict["relationship"]
             relationship_confidence_from_paper = relationship_dict["confidence"]
             relationship_context_from_paper = relationship_dict["context"]
@@ -716,7 +717,7 @@ def load(entities, relationships, sources, db_session):
 
 
 def run_pubmed_ingestion(disease_name):
-    print(f"Sarting PubMed ingestion for: {disease_name}")
+    print(f"Starting PubMed ingestion for: {disease_name}")
 
     raw_records = extract(disease_name)
 

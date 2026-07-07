@@ -12,7 +12,7 @@ def get_with_retry(url, params, timeout=30.0, context_label=""):
             response = requests.get(url, params=params, timeout=timeout)
             return response
         except requests.exceptions.ConnectionError as e:
-            print(f"Connection error on attempt {attmept + 1} for {context_label}: {e}")
+            print(f"Connection error on attempt {attempt + 1} for {context_label}: {e}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY_SECONDS)
     print(f"Failed after {MAX_RETRIES} attempts for {context_label}")
