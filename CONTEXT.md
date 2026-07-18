@@ -217,6 +217,7 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 11. Working Method (how this project gets built)
 
 - **Pseudocode-first, real code only on request.** Logic gets planned and reviewed in a consistent pseudocode style (ALL CAPS actions, `//` comments, FUNCTION/END FUNCTION) before any real code is written, so the developer types every line by hand and understands it — no copy-pasting, ever.
+- **The assistant provides architecture decisions, pseudocode, and file-level guidance only.** The developer types all real code by hand. Never output complete, runnable code. If the developer explicitly says "write the code" for a specific fix, that is the only exception — otherwise pseudocode only, always.
 - **Verify against real API output before writing logic.** Every ingestion source's actual JSON/XML shape gets pulled and inspected via curl before pseudocode is finalized — several real bugs (missing `continent` field on OpenAlex institutions, PubMed's inconsistent MeSH tagging, the "Niger"/"Nigeria" substring bug) were only caught this way, not by reading documentation.
 - **Explain code line by line.** Standing rule across all sessions.
 - **One clean file swap over incremental patches** when multiple interconnected bugs need fixing at once — safer than tracking five small edits by memory, especially late in a session.
@@ -234,6 +235,32 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-07-18 — SL4 architecture documented
+
+**Decided:** Full SL4 architecture written to `SL4_ARCHITECTURE.md` in project root.
+Includes: CTE query patterns (single-hop, 2-hop recursive, bidirectional, path-finding),
+Python evidence-weighing layer, contradiction detection, three-state epistemic resolution,
+API router endpoints, coverage registry schema, and file structure for `app/sl4/` module.
+
+**Status:** Design phase. Phase 1 (single-hop CTEs + evidence weighing) is the minimum viable SL4.
+
+### 2026-07-18 — Pseudocode-first enforced for assistant interactions
+
+**Decided:** The assistant provides architecture decisions, pseudocode, and
+file-level guidance only. The developer types all real code by hand — no
+copy-pasting generated code into the codebase.
+
+**Why:** Writing code directly bypasses the developer's own working method
+(CONTEXT.md §11), which requires understanding every line by typing it
+manually. Direct code generation produces working results but skips the
+comprehension and muscle-memory build that the pseudocode-first process
+was designed for.
+
+**Rules out:** The assistant writing complete files directly. The assistant
+editing ingestion/model/migration code directly.
+
+**Unblocks:** Consistent working method across all sessions going forward.
 
 ### 2026-07-18 — Staged approach: CTEs permanent, logic layer optional and deferred
 

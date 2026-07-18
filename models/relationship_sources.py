@@ -12,6 +12,8 @@ class RelationshipSource(Base):
     relationship_id = Column(Integer, ForeignKey("entity_relations.id"), nullable=False)
     source_name = Column(String, nullable=False)
     source_url = Column(String, nullable=False)
+    source_author = Column(String, nullable=True)
+    source_title = Column(String, nullable=True)
     confidence = Column(Integer, nullable=False)
     context = Column(String)
     created_at = Column(

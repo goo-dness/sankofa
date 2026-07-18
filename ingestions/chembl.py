@@ -1,5 +1,5 @@
 import requests
-from app.http_utils import get_with_retry
+from app.http_utils import get_with_retry, resolve_next_url
 import time
 import json
 from sqlalchemy import func
@@ -110,7 +110,7 @@ def extract(disease_name):
                 if indications_count_for_mesh_id >= DRUG_INDICATION_CAP_PER_DISEASE:
                     break
 
-            current_page_url = JSON_DATA.get('page_meta', {}).get('next') # Get next page url
+            current_page_url = resolve_next_url(JSON_DATA.get('page_meta', {}).get('next')) # Get next page url
             if indications_count_for_mesh_id >= DRUG_INDICATION_CAP_PER_DISEASE:
                 break
 

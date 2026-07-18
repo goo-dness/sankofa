@@ -12,6 +12,8 @@ class EntitySource(Base):
     entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
     source_name = Column(String)
     source_url = Column(String)
+    source_author = Column(String, nullable=True)
+    source_title = Column(String, nullable=True)
     access_at = Column(DateTime, default=datetime.now(timezone.utc))
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

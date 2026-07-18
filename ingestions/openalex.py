@@ -393,7 +393,11 @@ def transform(
 
             entity_type = determine_entity_type(abstract_text)
             region = extract_region(paper.get("authorships", []))
-
+            # Extract first author name for source attribution
+            authorships = paper.get("authorships", [])
+            first_author = ""
+            if authorships and authorships[0].get("author", {}).get("display_name"):
+                first_author = authorships[0]["author"]["display_name"]
             disease_entity_dict = {
                 "name": disease_name,
                 "domain": "healthcare",
@@ -424,6 +428,8 @@ def transform(
                 "entity_name": disease_name,
                 "source_name": "OpenAlex",
                 "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+                "source_author": first_author,
+                "source_title": paper.get("title", ""),
             }
             # Add source_dict to sources
             sources.append(source_dict)
@@ -436,6 +442,8 @@ def transform(
                 "confidence": confidence,
                 "context": paper.get("title"),
                 "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+                "source_author": first_author,
+                "source_title": paper.get("title", ""),
             }
             relationships.append(prevalent_relationships_dict)
 
@@ -470,6 +478,8 @@ def transform(
                     "source_url": paper.get("doi")
                     if paper.get("doi")
                     else paper.get("id"),
+                    "source_author": first_author,
+                    "source_title": paper.get("title", ""),
                 }
                 relationships.append(treats_relationship_dict)
         except Exception as e:
@@ -550,6 +560,8 @@ def load(entities, relationships, sources, db_session):
                     entity_id=entity_id,
                     source_name=source_dict["source_name"],
                     source_url=source_dict["source_url"],
+                    source_author=source_dict.get("source_author"),
+                    source_title=source_dict.get("source_title"),
                 )
                 # Add to db
                 db_session.add(new_source)
@@ -617,6 +629,8 @@ def load(entities, relationships, sources, db_session):
                         source_url=relationship_dict["source_url"],
                         confidence=relationship_dict["confidence"],
                         context=relationship_dict["context"],
+                        source_author=relationship_dict.get("source_author"),
+                        source_title=relationship_dict.get("source_title"),
                     )
                     db_session.add(new_rel_source)
                     print(
@@ -645,6 +659,8 @@ def load(entities, relationships, sources, db_session):
                     source_url=relationship_dict["source_url"],
                     confidence=relationship_dict["confidence"],
                     context=relationship_dict["context"],
+                    source_author=relationship_dict.get("source_author"),
+                    source_title=relationship_dict.get("source_title")
                 )
                 db_session.add(new_rel_source)
                 print(

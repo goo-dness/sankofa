@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import Session
@@ -8,10 +9,29 @@ from app.database import Base, SessionLocal, engine, get_db
 from data.relationship_types import relationship_types_data
 from ingestions.openalex import DISEASE_VOCABULARY, run_openalex_ingestion
 from ingestions.pubmed import run_pubmed_ingestion
-from ingestions.who import extract_who_data, load_to_database, transform_to_entities
+from ingestions.who import extract_who_data, load_to_database, transform_to_entities, INDICATOR_MAP
 from models.relations_type import RelationshipTypes
-
+from models.coverage import IngestionCoverage
+from ingestions.chembl import run_chembl_ingestion, MESH_DISEASE_MAP
 Base.metadata.create_all(bind=engine)
+
+
+def record_coverage(db, domain: str, disease_name: str, source_name: str):
+    normalized = disease_name.strip().lower()
+    existing = (
+        db.query(IngestionCoverage)
+        .filter_by(disease_name=normalized, source_name=source_name)
+        .first()
+    )
+    if existing:
+        existing.last_ingested_at = datetime.now(timezone.utc)
+    else:
+        db.add(
+            IngestionCoverage(
+                domain=domain, disease_name=normalized, source_name=source_name
+            )
+        )
+    db.commit()
 # Define insertion parameters
 WHO_INDICATOR_CODES_TO_INGEST = [
     "MALARIA_EST_INCIDENCE",
@@ -76,6 +96,9 @@ def run_who_ingestion():
                 print(
                     f" No data extracted for {indicator_code}, skipping transformation and load."
                 )
+                disease_name = INDICATOR_MAP.get(indicator_code, indicator_code)
+                with get_db() as db_session:
+                    record_coverage(db_session, "epidemiology", disease_name, "WHO GHO")
                 continue
         except Exception as e:
             print(f" Error during extraction for {indicator_code}:", {e})
@@ -110,6 +133,8 @@ def run_who_ingestion():
                     transformed_sources,
                 )
                 print(f"  Successfully loaded data for {indicator_code} to database.")
+                disease_name = INDICATOR_MAP.get(indicator_code, indicator_code)
+                record_coverage(db_session, "epidemiology", disease_name, "WHO GHO")
             except Exception as e:
                 print(f"  Error during database load for {indicator_code}: {e}")
     print("WHO GHO ingestion pipeline finished.")
@@ -119,6 +144,8 @@ def run_openalex():
     print("Starting OpenAlex ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
         run_openalex_ingestion(disease_name)
+        with get_db() as db_session:
+            record_coverage(db_session, "healthcare", disease_name, "OpenAlex")
     print("OpenAlex ingestion pipeline finished.")
 
 
@@ -126,11 +153,22 @@ def run_pubmed():
     print("Starting PubMed ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
         run_pubmed_ingestion(disease_name)
+        with get_db() as db_session:
+            record_coverage(db_session, "healthcare", disease_name, "PubMed")
     print("PubMed ingestion pipeline finished.")
 
+
+def run_chembl():
+    print("Starting ChEMBL ingestion pipeline...")
+    for disease_name in MESH_DISEASE_MAP:
+        run_chembl_ingestion(disease_name)
+        with get_db() as db_session:
+            record_coverage(db_session, "healthcare", disease_name, "ChEMBL")
+    print("ChEMBL ingestion complete.")
 
 if __name__ == "__main__":
     seed_relationship_types()
     run_who_ingestion()
     run_openalex()
     run_pubmed()
+    run_chembl()

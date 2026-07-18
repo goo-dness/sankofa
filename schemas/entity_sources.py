@@ -8,6 +8,8 @@ class EntitySourcesBase(BaseModel):
     entity_id: Optional[int] = None
     source_name: Optional[str] = None
     source_url: Optional[str] = None
+    source_author: Optional[str] = None
+    source_title: Optional[str] = None
     access_at: Optional[datetime] = None
 
 

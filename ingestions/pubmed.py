@@ -378,6 +378,13 @@ def transform(raw_records, disease_name):
                 ".//PublicationType"
             )
             Author_LIST_ELEMENTS = paper_xml_record.findall(".//Author")
+            # Extract first author name for source contribution
+            first_author = ""
+            if Author_LIST_ELEMENTS:
+                first_author_elem = Author_LIST_ELEMENTS[0]
+                last_name = first_author_elem.findtext("LastName", "")
+                fore_name = first_author_elem.findtext("ForeName", "")
+                first_author = f"{last_name} {fore_name}".strip()
 
             doi_url = None
             ArticleIdList_ELEMENT = paper_xml_record.find(".//ArticleIdList")
@@ -426,6 +433,8 @@ def transform(raw_records, disease_name):
                 "source_url": paper_source_url,
                 "confidence": confidence_tier_for_this_paper,
                 "context": ArticleTitle_TEXT,
+                "source_author": first_author,
+                "source_title": ArticleTitle_TEXT,
             }
             sources.append(disease_entity_source_record)
 
@@ -453,6 +462,8 @@ def transform(raw_records, disease_name):
                 "source_url": paper_source_url,
                 "confidence": confidence_tier_for_this_paper,
                 "context": ArticleTitle_TEXT,
+                "source_author": first_author,
+                "source_title": ArticleTitle_TEXT,
             }
             sources.append(region_entity_source_record)
 
@@ -465,6 +476,8 @@ def transform(raw_records, disease_name):
                 "context": ArticleTitle_TEXT,
                 "source_url": paper_source_url,
                 "source_name": "PubMed",
+                "source_author": first_author,
+                "source_title": ArticleTitle_TEXT
             }
             relationships.append(prevalent_relationship_dict)
 
@@ -498,6 +511,8 @@ def transform(raw_records, disease_name):
                         "source_url": paper_source_url,
                         "confidence": confidence_tier_for_this_paper,
                         "context": ArticleTitle_TEXT,
+                        "source_author": first_author,
+                        "source_title": ArticleTitle_TEXT
                     }
                     sources.append(treatment_entity_source_record)
 
@@ -509,6 +524,8 @@ def transform(raw_records, disease_name):
                         "context": ArticleTitle_TEXT,
                         "source_url": paper_source_url,
                         "source_name": "PubMed",
+                        "source_author": first_author,
+                        "source_title": ArticleTitle_TEXT
                     }
                     relationships.append(treats_relationship_dict)
         except Exception as error:
@@ -593,6 +610,8 @@ def load(entities, relationships, sources, db_session):
                         entity_id=entity_id,
                         source_name=source_name,
                         source_url=source_url,
+                        source_author=source_entry_dict.get("source_author"),
+                        source_title=source_entry_dict.get("source_title")
                     )
                     db_session.add(new_entity_source)
 
@@ -661,6 +680,8 @@ def load(entities, relationships, sources, db_session):
                         source_url=relationship_source_url,
                         confidence=relationship_confidence_from_paper,
                         context=relationship_context_from_paper,
+                        source_author=relationship_dict.get("source_author"),
+                        source_title=relationship_dict.get("source_title"),
                     )
                     db_session.add(new_relationship_source_entry)
 
@@ -705,6 +726,8 @@ def load(entities, relationships, sources, db_session):
                         source_url=relationship_source_url,
                         confidence=relationship_confidence_from_paper,
                         context=relationship_context_from_paper,
+                        source_author=relationship_dict.get("source_author"),
+                        source_title=relationship_dict.get("source_title"),
                     )
         db_session.commit()
         print("Load complete")
