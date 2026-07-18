@@ -87,22 +87,30 @@ Every entity and relationship carries a confidence score:
 
 | Tier | Label | Meaning |
 |---|---|---|
-| 3 | Established | Peer-reviewed, replicated, WHO / EMBL sourced |
+| 3 | Established | Peer-reviewed, replicated, WHO sourced |
 | 2 | Emerging | Single study, preliminary findings |
 | 1 | Traditional | Ethnomedicine, oral record, community knowledge |
 
 Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional and Established evidence are original research opportunities.
 
+### Evidence Weighing
+
+Every entity and relationship tracks `evidence_count` — the number of independent sources that confirm it. When a new source confirms an existing fact, `evidence_count` increments and `confidence` upgrades only if the new source carries a strictly higher rating. One strong RCT outweighs ten weak case reports.
+
+### Provenance
+
+Every entity has an `entity_sources` table. Every relationship has a `relationship_sources` table. Both record the exact source URL, source name, and confidence of each contributing record — a complete audit trail from graph edge back to original data.
+
 ---
 
 ## Data Sources
 
-| Source | Layer | Type |
-|---|---|---|
-| WHO Global Health Observatory | Epidemiological | REST API |
-| OpenAlex | Research | API |
-| AlphaFold | Molecular / Protein | REST API |
-| EMBL | Genetic / Sequence | REST API |
+| Source | Layer | Type | Status |
+|---|---|---|---|
+| WHO Global Health Observatory | Epidemiological | REST API | Complete |
+| OpenAlex | Research | REST API | Complete |
+| PubMed | Research | REST API | Complete |
+| ChEMBL | Pharmacological / Molecular | REST API | Complete |
 
 ---
 
@@ -115,7 +123,7 @@ Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional a
 | ORM | SQLAlchemy |
 | Migrations | Alembic |
 | Validation | Pydantic |
-| HTTP Client | httpx |
+| HTTP Client | requests |
 | Server | Uvicorn |
 | Language | Python 3.12+ |
 
@@ -125,39 +133,46 @@ Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional a
 
 ```
 sankofa/
-├── app/               # FastAPI app entry point
+├── main.py
+├── app/
 │   ├── database.py           # DB connection and session
 │   ├── config.py             # Environment config
-│   │           # Core knowledge engine
-├── models/           # SQLAlchemy models
-│   ├── __init__.py
+│   └── http_utils.py         # Shared retry logic for network requests
+├── models/                   # SQLAlchemy models
 │   ├── entities.py
 │   ├── entity_names.py
 │   ├── entity_relationships.py
 │   ├── entity_sources.py
-│   └── entity_peoples.py
-├── schemas/          # Pydantic schemas
-│   ├── __init__.py
-│   └── entities.py
-└── router         # API endpoints
-│   |--- entities.py
-|   |--- entity_names.py
-|   |--- entity_people.py
-|   |--- entity_relationships.py
-|   |--- entity_sources.py
-|   |--- relations_type.py
-├── ingestion/            # Data pipeline scripts
-│   ├── who.py            # WHO GHO ingestion
-│   ├── ajol.py           # AJOL scraper
-│   ├── alphafold.py      # AlphaFold ingestion
-│   └── embl.py           # EMBL ingestion
-│   
-│   
-│
+│   ├── entity_people.py
+│   ├── relationship_sources.py
+│   └── relations_type.py
+├── schemas/                  # Pydantic schemas (mirrors models)
+│   ├── entities.py
+│   ├── entity_names.py
+│   ├── entity_people.py
+│   ├── entity_relationships.py
+│   ├── entity_sources.py
+│   ├── relationship_sources.py
+│   └── relations_type.py
+├── routers/                  # API endpoints
+│   ├── entities.py
+│   ├── entity_names.py
+│   ├── entity_people.py
+│   ├── entity_relationships.py
+│   ├── entity_sources.py
+│   ├── relationship_sources.py
+│   └── relations_type.py
+├── data/
+│   ├── relationship_types.py # 62 seeded relationship types
+│   └── seed.py               # Ingestion orchestrators
+├── ingestions/               # Data pipeline scripts
+│   ├── who.py                # WHO GHO ingestion
+│   ├── openalex.py           # OpenAlex ingestion
+│   ├── pubmed.py             # PubMed ingestion
+│   └── chembl.py             # ChEMBL ingestion
 ├── migrations/               # Alembic migrations
 ├── tests/
 ├── requirements.txt
-|--- main.py
 ├── .env.example
 └── README.md
 ```
@@ -175,7 +190,7 @@ sankofa/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/sankofa.git
+git clone https://github.com/goo-dness/sankofa.git
 cd sankofa
 
 # Create and activate virtual environment
@@ -196,7 +211,7 @@ cp .env.example .env
 alembic upgrade head
 
 # Start the server
-uvicorn app.main:app --reload
+uvicorn main:app --reload
 ```
 
 ---
@@ -207,10 +222,10 @@ uvicorn app.main:app --reload
 
 | Phase | Description | Status |
 |---|---|---|
-| Phase 1 | Knowledge Engine — entities, relationships, corpus | 🔨 In Progress |
-| Phase 2 | WHO data ingestion pipeline | 🔨 In Progress |
-| Phase 3 | AJOL, AlphaFold, EMBL pipelines | Planned |
-| Phase 4 | Query Engine (SL4) | Planned |
+| Phase 1 | Knowledge Engine — entities, relationships, corpus | Done |
+| Phase 2 | WHO GHO data ingestion pipeline | Done |
+| Phase 3 | OpenAlex, PubMed, ChEMBL pipelines | Done |
+| Phase 4 | Query Engine (SL4) — pyDatalog symbolic reasoning | In Progress |
 | Phase 5 | Community + Learning Center | Planned |
 | Phase 6 | Litsi — Natural Language Layer | Planned |
 

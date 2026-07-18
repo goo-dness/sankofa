@@ -10,6 +10,7 @@ def get_with_retry(url, params, timeout=30.0, context_label=""):
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
             return response
         except requests.exceptions.ConnectionError as e:
             print(f"Connection error on attempt {attempt + 1} for {context_label}: {e}")

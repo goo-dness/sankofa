@@ -16,6 +16,7 @@ from routers import (
     entity_people,
     entity_relationships,
     entity_sources,
+    relationship_sources,
     relations_type,
 )
 
@@ -49,6 +50,7 @@ app.include_router(entity_names.router)
 app.include_router(entity_people.router)
 app.include_router(entity_relationships.router)
 app.include_router(entity_sources.router)
+app.include_router(relationship_sources.router)
 app.include_router(relations_type.router)
 
 
