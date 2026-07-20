@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-import httpx
+import requests
 from sqlalchemy.orm import Session
 
 from app.http_utils import get_with_retry
@@ -50,7 +50,7 @@ def extract_who_data(
             )
             if response is None:
                 print(f"Could not fetch results for {indicator_code}, skipping.")
-                continue
+                break
             response.raise_for_status()  # Raise an exception for HTTP errors
 
             # Parse the JSON response
@@ -67,15 +67,6 @@ def extract_who_data(
                 break
             else:
                 skip += DEFAULT_PAGE_SIZE  # Increment skip for the next page
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP error occurred while fetching data for {indicator_code}: {e}")
-            print(f"Response content: {e.response.text}")
-            break
-        except httpx.RequestError as e:
-            print(
-                f"Request error occurred while fetching data for {indicator_code}: {e}"
-            )
-            break
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             break

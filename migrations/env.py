@@ -17,6 +17,7 @@ from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
+from models.coverage import IngestionCoverage
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

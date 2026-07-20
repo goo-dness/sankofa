@@ -8,8 +8,8 @@ from app.database import Base
 class EntityRelations(Base):
     __tablename__ = "entity_relations"
     id = Column(Integer, primary_key=True, index=True)
-    from_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
-    to_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
+    from_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False, index=True)
+    to_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False, index=True)
     relationship_id = Column(
         Integer, ForeignKey("relationship_types.id"), nullable=False
     )

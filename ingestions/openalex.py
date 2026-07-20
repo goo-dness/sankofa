@@ -345,7 +345,7 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
         )
         if response is None:
             print(f"Could not fetch results for {disease_name}, skipping disease")
-            continue
+            break
         # Raise an exception for HTTP errors
         if response.status_code != 200:
             print(

@@ -742,13 +742,3 @@ def run_chembl_ingestion(disease_name):
         db_session.close()
 
     print(f"ChEMBL ingestion complete for: {disease_name}")
-
-def run_chembl():
-        print("Starting ChEMBL ingestion pipeline...")
-        for disease_name in MESH_DISEASE_MAP:
-            run_chembl_ingestion(disease_name)
-        print("ChEMBL ingestion pipeline finished.")
-
-
-if __name__ == "__main__":
-    run_chembl()

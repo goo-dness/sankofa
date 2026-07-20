@@ -9,7 +9,10 @@ class RelationshipSourceBase(BaseModel):
     source_name: Optional[str] = None
     source_url: Optional[str] = None
     confidence: Optional[int] = None
+    source_author: Optional[str] = None
+    source_title: Optional[str] = None
     context: Optional[str] = None
+    evidence_count: Optional[int] = None
 
 
 class RelationshipSourceCreate(RelationshipSourceBase):

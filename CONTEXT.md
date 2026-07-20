@@ -236,6 +236,34 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-07-19 — Recursive CTE reasoning engine: dumb traversal, Python interpretation, cycle/depth/row guards
+
+**Decided:** The SL4 multi-hop reasoning engine uses a recursive CTE
+(`WITH RECURSIVE`) over `entity_relationships` that returns raw
+hop-by-hop paths only (entity IDs, relationship IDs, per-hop confidence)
+— no interpretation happens in SQL. Cycle protection via a visited-
+entity-ID array is mandatory. Depth is a parameterized argument
+(default 4), not hardcoded. Total output rows get a hard `LIMIT`.
+`entity_relationships.from_entity_id` and `.to_entity_id` get indexed.
+Path-level confidence is computed in Python as `MIN()` across hops.
+
+**Why:** Mirrors the existing `load()`-stays-generic /
+`transform()`-owns-meaning pattern — one place should own
+interpretation, not split across SQL and Python. Fan-out from
+well-connected entities (e.g. malaria, already touched by 4+
+relationship types across 4 pipelines) grows combinatorially with
+depth, so a row cap matters independently of the depth cap.
+
+**Rules out:** Rule-table-driven SQL pruning (filtering
+relationship-type sequences inside the CTE's join condition itself)
+for this phase — deferred, gated on a relationship-type validity rule
+table that doesn't exist yet.
+
+**Unblocks:** The recursive CTE query can now be built — parameterized
+depth, row-capped, cycle-guarded.
+
+
+
 ### 2026-07-18 — SL4 architecture documented
 
 **Decided:** Full SL4 architecture written to `SL4_ARCHITECTURE.md` in project root.

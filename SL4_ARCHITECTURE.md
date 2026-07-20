@@ -736,35 +736,41 @@ Sankofa's own version of it. Post-SL4-V1 scope.
 `source_author`/`source_title` are the new fields from requirement A above
 — not yet in the real schema, need the migration first.
 
-### Restart checklist — do in this order
+### Restart checklist — updated 2026-07-19
 
-1. Truncate the database. Decided against a backfill migration for the
-   author/title fields — cleaner to wipe and re-ingest than patch existing
-   rows with missing data.
-2. Migration: add `source_author`, `source_title` (nullable) to
-   `entity_sources` and `relationship_sources`.
-3. Update `extract()`/`transform()` in `who.py`, `openalex.py`, `pubmed.py`,
-   and `ingestions/chembl.py` to actually capture and pass author/title
-   through to `load()`. Verify against real API output first, per usual
-   working method — don't assume the field names.
-4. Re-run all four ingestions against the freshly-migrated, empty database.
-5. Separately: check http://chembl.github.io/status/ — if the
-   `drug_indication` endpoint is back, resume ChEMBL's `load()` validation
-   that was blocked before this SL4 detour started.
-6. Paste the real `data/relationship_types.py` so the draft
-   `OPPOSING_RELATIONSHIP_PAIRS` table (in the prior session's notes) can be
-   finalized against actual seeded types instead of reconstructed memory.
-7. Once contradiction pairs are final, run the already-drafted Gemini
-   prompt for `CHECK_CONTRADICTIONS` and `RESOLVE_QUERY_STATE` pseudocode,
-   review it line by line before typing any of it in.
-8. Write the first recursive CTE by hand, against the real schema, for the
-   simplest catalog query (single-hop lookup) before attempting the 2-hop
-   chains — same "verify against real output before generalizing" instinct
-   that's caught real bugs before.
+1. ~~Truncate the database.~~ ✅ Done 2026-07-18.
+2. ~~Migration: add `source_author`, `source_title` (nullable) to
+   `entity_sources` and `relationship_sources`.~~ ✅ Done — included in
+   `001_consolidated_schema.py`.
+3. ~~Update `extract()`/`transform()` in `who.py`, `openalex.py`, `pubmed.py`,
+   and `ingestions/chembl.py` to capture and pass author/title
+   through to `load()`.~~ ✅ Done.
+4. ~~Re-run all four ingestions against the freshly-migrated, empty database.~~
+   ✅ Done. DB has 2494 entities, 4881 relationships, 43363 entity sources,
+   19476 relationship sources.
+5. Check http://chembl.github.io/status/ — if the `drug_indication` endpoint
+   is back, resume ChEMBL's `load()` validation. **Still blocked externally.**
+6. ~~Paste the real `data/relationship_types.py`~~ ✅ Already in project root
+   (`data/relationship_types.py`, 62 seeded types). `CONFLICT_PAIRS` needs
+   finalization against this list — **do this before writing contradiction code.**
+7. Once contradiction pairs are final, draft `CHECK_CONTRADICTIONS` and
+   `RESOLVE_QUERY_STATE` pseudocode, review line by line before typing.
+8. Write the first CTE by hand, against the real schema, for single-hop lookup
+   before attempting 2-hop chains.
+
+### Still needed before SL4 code (discovered during build check)
+
+9. **Add indexes on `entity_relations.from_entity_id` and
+   `entity_relations.to_entity_id`** — the decision log specified these but
+   they were never created. CTE recursive joins on these columns; without
+   indexes, every hop full-scans the edge table.
+10. **Fix `RelationshipSourceBase` schema** — model and migration have
+    `source_author`/`source_title`, but the Pydantic schema doesn't expose
+    them. Won't block SL4 but should be fixed for consistency.
 
 ### Open / not yet decided
-- `OPPOSING_RELATIONSHIP_PAIRS` still draft, pending the real seed file
-- No real SQL or Python written yet for SL4 — still design stage throughout
+- `CONFLICT_PAIRS` draft in §4.2 needs finalization against the real 62 types
+- No SL4 code written yet — build starting now
 - Diagram rendering and research-notebook feature are named but unscoped
   beyond the paragraph above
 

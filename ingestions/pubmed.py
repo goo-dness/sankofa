@@ -706,21 +706,23 @@ def load(entities, relationships, sources, db_session):
                             f"CRITICAL ERROR: Relationship with ID {existing_relationship.id} not found immediately after upserting. Skipping evidence_count/confidence update for source {relationship_source_url}."
                         )
                         continue
+                else:
+                    pass
 
-                else:  # Relationship does not exist, create it fresh
-                    new_relationship = EntityRelations(
+            else:  # Relationship does not exist, create it fresh
+                new_relationship = EntityRelations(
                         from_entity_id=from_id,
                         to_entity_id=to_id,
                         relationship_id=relationship_type_id,
                         confidence=relationship_confidence_from_paper,
                         context=relationship_context_from_paper,
                         evidence_count=1,
-                    )
-                    db_session.add(new_relationship)
-                    db_session.flush()
+                )
+                db_session.add(new_relationship)
+                db_session.flush()
 
-                    # Create the first RelationshipSource record for this new relationship
-                    new_relationship_source_entry = RelationshipSource(
+                # Create the first RelationshipSource record for this new relationship
+                new_relationship_source_entry = RelationshipSource(
                         relationship_id=new_relationship.id,
                         source_name=relationship_source_name,
                         source_url=relationship_source_url,
@@ -729,6 +731,7 @@ def load(entities, relationships, sources, db_session):
                         source_author=relationship_dict.get("source_author"),
                         source_title=relationship_dict.get("source_title"),
                     )
+                db_session.add(new_relationship_source_entry)
         db_session.commit()
         print("Load complete")
 

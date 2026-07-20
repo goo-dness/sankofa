@@ -13,7 +13,7 @@ class EntityBase(BaseModel):
     expression: Optional[str] = None
     confidence: Optional[int] = None
     contributor: Optional[str] = None
-
+    evidence_count: Optional[int] = None
 
 class EntityCreate(EntityBase):
     pass
