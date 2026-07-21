@@ -236,6 +236,56 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-07-21 — Inference layer: plain Python rule functions, not DL/Datalog
+
+**Decided:** Layer 2/3 reasoning is implemented as hand-written Python
+functions performing typed graph-edge composition over
+entity_relationships — not a Description Logic reasoner (owlready2)
+or a Datalog engine (pyDatalog/ASP). Each rule is a plain function:
+pattern of existing relationship rows in, new derived relationship
+row out.
+
+Confidence for derived facts uses a continuous score alongside the
+existing discrete tier:
+- `TIER_SCORE = {1: 0.3, 2: 0.6, 3: 1.0}` (Traditional/Emerging/Established)
+- `combined = min(score(premise_a), score(premise_b))` — a chain is
+  only as strong as its weakest premise
+- `derived_score = combined * (DECAY ** depth)`, `DECAY = 0.75` global
+  constant, `depth = max(premise_a.depth, premise_b.depth) + 1`
+- Score maps back to a tier for storage/display (`>=0.7 → 3`,
+  `>=0.4 → 2`, else `1`), but a derived fact's tier can never exceed
+  `min(premise tiers)` regardless of score — hard cap against
+  confidence laundering across chains.
+
+Cycle/runaway protection, three independent guards:
+- `MAX_DEPTH = 3` global constant — facts at max depth aren't used
+  as premises for further derivation
+- Each derived fact stores `derived_from: list[fact_id]`; before
+  insert, ancestry is walked backward to reject a new
+  `(subject, relation, object)` that already appears upstream
+- Dedup check on `(subject, relation, object)` before any insert,
+  observed or derived, as a backstop against duplicate rows
+
+**Why:** Sankofa's relationship types (causes, treats, inhibits,
+prevalent_in...) are directed weighted edges, not is-a/category
+relationships — DL's classification/subsumption machinery doesn't
+fit the data. Datalog/general rule engines solve a more general
+problem than the fixed, small set of composition patterns Sankofa
+actually needs. Owning the reasoning layer outright also avoids
+locking into a formalism that may not survive Layer 4 (Ùmà,
+indigenous-knowledge reasoning), which likely won't map cleanly onto
+classical DL categories anyway.
+**Rules out:** owlready2 (Description Logic reasoner) — rejected,
+built for is-a/category hierarchies Sankofa doesn't have. Datalog/ASP
+(pyDatalog, clingo) — rejected as more general/complex than needed.
+SymPy — out of scope, that's for the mathematics domain, not relational
+inference.
+**Unblocks:** Layer 2 rule functions can be written directly against
+the existing entity_relationships schema — first rule to implement:
+`inhibits + causes → treats` (derived), tested on the malaria/anemia
+slice before generalizing to a rule-registration framework.
+
+
 ### 2026-07-19 — Recursive CTE reasoning engine: dumb traversal, Python interpretation, cycle/depth/row guards
 
 **Decided:** The SL4 multi-hop reasoning engine uses a recursive CTE
