@@ -1,16 +1,16 @@
-# SL4 Query Engine — Architecture
+# Computational Symbolic Engine — Architecture
 
 **Date:** July 2026
 **Decision:** Postgres recursive CTEs + plain Python (no logic-programming library)
-**Status:** Design phase, not yet implemented
+**Status:** In progress
 
 ---
 
 ## 1. Overview
 
-SL4 is Sankofa's symbolic reasoning layer. It answers multi-hop queries over the knowledge graph by traversing `entity_relations` edges using Postgres `WITH RECURSIVE` CTEs, then applying Python functions for evidence weighing, contradiction detection, and three-state epistemic resolution.
+The Computational Symbolic Engine is Sankofa's symbolic reasoning layer. It answers multi-hop queries over the knowledge graph by traversing `entity_relations` edges using Postgres `WITH RECURSIVE` CTEs, then applying Python functions for evidence weighing, contradiction detection, and three-state epistemic resolution.
 
-**What SL4 does NOT do:** open-ended reasoning, unification-based backtracking search, or rule inference. The query catalog is bounded and fixed-shape — single-hop lookups, 2-3 hop chains, evidence aggregation, contradiction checks. This is deliberate: bounded traversal is predictable and suitable for live query-serving.
+**What the engine does NOT do:** open-ended reasoning, unification-based backtracking search, or rule inference. The query catalog is bounded and fixed-shape — single-hop lookups, 2-3 hop chains, evidence aggregation, contradiction checks. This is deliberate: bounded traversal is predictable and suitable for live query-serving.
 
 ---
 
@@ -53,9 +53,9 @@ relationship_sources (per-edge provenance)
 ```
 
 **Key properties:**
-- Graph is directed (from → to), but SL4 treats it as undirectional for neighborhood queries
+- Graph is directed (from → to), but the engine treats it as undirectional for neighborhood queries
 - Each edge carries its own confidence and evidence_count
-- 56 relationship types seeded across 9 domains
+- 62 relationship types seeded across 9 domains
 
 ---
 
@@ -253,28 +253,28 @@ def weigh_chain(chain: list[dict]) -> dict:
 ### 4.2 Contradiction Detection
 
 ```python
+from collections import defaultdict
+
 # Known conflict pairs: relationship types that semantically contradict
 # each other when applied to the same entity pair.
 CONFLICT_PAIRS: set[tuple[str, str]] = {
+    ("prevents", "causes"),
     ("treats", "contraindicated_with"),
     ("prevents", "risk_factor_for"),
     ("activates", "suppresses"),
     ("protective_against", "predisposes_to"),
     ("synergizes_with", "antagonizes"),
+    ("inhibits", "activates"),
+    ("inhibits", "produces"),
 }
 
 
-def detect_contradictions(
-    results: list[dict],
-) -> list[dict]:
+def detect_contradictions(results: list[dict]) -> list[dict]:
     """Flag entity pairs with conflicting relationship types.
 
     Example: "X treats Y" AND "X contraindicated_with Y" on the
     same (from_entity, to_entity) pair.
     """
-    # Group results by (from_entity_id, to_entity_id)
-    from collections import defaultdict
-
     entity_pairs: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for r in results:
         key = (r["from_entity_id"], r["to_entity_id"])
@@ -533,13 +533,13 @@ def execute_neighborhood(
 ## 6. API Endpoints
 
 ```python
-# routers/sl4.py
+# routers/engine.py
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 
-router = APIRouter(prefix="/sl4", tags=["SL4 Query Engine"])
+router = APIRouter(prefix="/engine", tags=["Computational Symbolic Engine"])
 
 
 @router.get("/query")
@@ -587,64 +587,38 @@ def find_path(
 
 ---
 
-## 7. Coverage Registry (deferred, schema planned)
-
-```sql
-CREATE TABLE ingestion_coverage (
-    id SERIAL PRIMARY KEY,
-    domain VARCHAR NOT NULL,           -- "healthcare", "pharmacology", etc.
-    disease_name VARCHAR NOT NULL,     -- normalized entity name
-    source_name VARCHAR NOT NULL,      -- "WHO GHO", "OpenAlex", "PubMed", "ChEMBL"
-    last_ingested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(disease_name, source_name)
-);
-
-CREATE INDEX ix_coverage_disease ON ingestion_coverage(disease_name);
-CREATE INDEX ix_coverage_domain ON ingestion_coverage(domain);
-```
-
-**Purpose:** Enables full three-state epistemic awareness. Without it, absence always means "knowably absent" (all ingested diseases appear in the graph). With it, we can distinguish "this disease was ingested but no relationship exists" from "this disease was never ingested."
-
-**Population:** Each ingestion pipeline writes a row when it processes a disease. WHO writes `(domain="epidemiology", disease_name="Malaria", source_name="WHO GHO")`. OpenAlex writes `(domain="healthcare", disease_name="Malaria", source_name="OpenAlex")`.
-
----
-
-## 8. File Structure
+## 7. File Structure
 
 ```
 sankofa/
-├── app/
-│   └── sl4/
-│       ├── __init__.py
-│       ├── queries.py          # CTE SQL queries (text() strings)
-│       ├── executor.py         # execute_single_hop, execute_two_hop, etc.
-│       ├── weighing.py         # aggregate_confidence, aggregate_evidence, weigh_chain
-│       ├── contradictions.py   # detect_contradictions, CONFLICT_PAIRS
-│       └── epistemic.py        # resolve_epistemic_state, EpistemicState enum
-├── routers/
-│   └── sl4.py                  # FastAPI router endpoints
-└── migrations/
-    └── versions/
-        └── xxx_add_ingestion_coverage.py  # (deferred)
+├── computation/
+│   ├── __init__.py          # Package exports
+│   ├── queries.py           # CTE SQL queries (text() strings)
+│   ├── executor.py          # execute_single_hop, execute_two_hop, etc.
+│   ├── weighing.py          # aggregate_confidence, aggregate_evidence, weigh_chain
+│   ├── contradictions.py    # detect_contradictions, CONFLICT_PAIRS
+│   └── epistemic.py         # resolve_epistemic_state, EpistemicState enum
+└── routers/
+    └── engine.py            # FastAPI router endpoints
 ```
 
 ---
 
-## 9. Implementation Order
+## 8. Implementation Order
 
 | Phase | What | Depends on |
 |-------|------|------------|
 | 1 | Single-hop CTE queries + Python evidence-weighing | Nothing |
 | 2 | Fixed-depth recursive CTEs (2-3 hop) | Phase 1 |
 | 3 | Contradiction detection logic | Phase 1 |
-| 4 | Coverage registry table + three-state resolution | Phase 1 |
+| 4 | Three-state epistemic resolution | Phase 1 |
 | 5 | API router endpoints | Phases 1-4 |
 
-**Phase 1 is the minimum viable SL4.** A researcher can ask "What treats malaria?" and get a confidence-rated, evidence-counted answer with source attribution. Phases 2-5 build on that foundation.
+**Phase 1 is the minimum viable engine.** A researcher can ask "What treats malaria?" and get a confidence-rated, evidence-counted answer with source attribution. Phases 2-5 build on that foundation.
 
 ---
 
-## 10. Design Decisions (locked)
+## 9. Design Decisions (locked)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -658,126 +632,9 @@ sankofa/
 
 ---
 
-## SL4 tooling settled + open design requirements + restart checklist
+## 10. Out of Scope
 
-Long session, mostly design/evaluation, no code written. Ended with the SL4
-tooling question closed and three open requirements queued for whenever
-ChEMBL's external block clears or gets worked around.
-
-### Architecture decisions made (also logged to CONTEXT.md)
-
-1. **SL4 engine = Postgres recursive CTEs (`WITH RECURSIVE`) + plain Python.**
-   Not pyDatalog (repo itself says unmaintained, tested against SQLAlchemy
-   0.7 vs. current 2.0.41). Not Prolog (unpredictable backtracking search —
-   same reason Wolfram Language and production Datalog engines like CodeQL
-   avoid it for query-serving). Not a custom-built language (Wolfram-scale
-   effort for no extra reasoning power over the above).
-2. **Prolog stays reserved for the Ùmà layer**, per the v2 doc's original
-   scoping — not touched for SL4.
-3. **Contradiction detection stays in scope for SL4 V1** (carried over from
-   the prior session) — implemented as a plain Python check against an
-   `OPPOSING_RELATIONSHIP_PAIRS` table, hard tier (block) vs. soft tier
-   (flag, don't block — e.g. `treats` vs `resistant_to`, combination
-   therapy makes both legitimately true).
-4. **Three-state proxy logic confirmed workable**: missing entity or
-   zero-rows-for-type → UNCHARTED; entities + type exist but no edge for
-   this pair → KNOWABLY_ABSENT; edge exists → KNOWN (contradiction check
-   runs here). The six empty ethnomedicine relationship types double as the
-   built-in UNCHARTED test case — no separate fixture needed.
-
-### Open design requirements — not yet built, queued
-
-**A. Source schema needs author + title, not just name + URL**
-`entity_sources` / `relationship_sources` currently only have
-`source_name`/`source_url`. PubMed and OpenAlex already return author/title
-in `extract()` — it's being discarded before `load()`. Needed for Litsi to
-produce real citations, not just links.
-
-**B. Diagram/visualization layer**
-Prompted by seeing Claude Science's reproducible-figure pattern (every
-chart ships with the code/data that produced it). Sankofa's version isn't
-RNA-seq plots — it's graph-shaped: relationship network diagrams,
-evidence-over-time trend lines (WHO GHO per-country/year data already
-supports this with no new ingestion), and multi-hop chain diagrams that
-double as a visual explanation of `reasoning_chain`. This is a rendering
-step downstream of SL4's structured object, not part of SL4 itself — belongs
-in the frontend/notebook phase.
-
-**C. Research notebook / article-writing feature**
-A `research_notes` table: `{query, structured_object, litsi_explanation,
-timestamp}`. Lets a researcher save an answer, then assemble saved notes
-into an article draft where every claim still traces back to its sources —
-and because `confidence_tier`/`evidence_count` are timestamped at save time,
-the article stays defensible even if the graph's confidence shifts later.
-Same "history travels with the artifact" principle as Claude Science, just
-Sankofa's own version of it. Post-SL4-V1 scope.
-
-### Litsi structured answer object (draft contract)
-
-```
-{
-  "query": "...",
-  "state": "KNOWN | KNOWABLY_ABSENT | UNCHARTED",
-  "answer": {
-    "relationship_type": "...",
-    "from_entity": "...",
-    "to_entity": "...",
-    "confidence_tier": 1-3,
-    "evidence_count": int
-  },
-  "reasoning_chain": [ ... ],       // multi-hop queries only
-  "contradictions": null | {...},
-  "sources": [
-    { "source_name", "source_url", "source_author", "source_title", "confidence" }
-  ],
-  "context": "..."
-}
-```
-`source_author`/`source_title` are the new fields from requirement A above
-— not yet in the real schema, need the migration first.
-
-### Restart checklist — updated 2026-07-19
-
-1. ~~Truncate the database.~~ ✅ Done 2026-07-18.
-2. ~~Migration: add `source_author`, `source_title` (nullable) to
-   `entity_sources` and `relationship_sources`.~~ ✅ Done — included in
-   `001_consolidated_schema.py`.
-3. ~~Update `extract()`/`transform()` in `who.py`, `openalex.py`, `pubmed.py`,
-   and `ingestions/chembl.py` to capture and pass author/title
-   through to `load()`.~~ ✅ Done.
-4. ~~Re-run all four ingestions against the freshly-migrated, empty database.~~
-   ✅ Done. DB has 2494 entities, 4881 relationships, 43363 entity sources,
-   19476 relationship sources.
-5. Check http://chembl.github.io/status/ — if the `drug_indication` endpoint
-   is back, resume ChEMBL's `load()` validation. **Still blocked externally.**
-6. ~~Paste the real `data/relationship_types.py`~~ ✅ Already in project root
-   (`data/relationship_types.py`, 62 seeded types). `CONFLICT_PAIRS` needs
-   finalization against this list — **do this before writing contradiction code.**
-7. Once contradiction pairs are final, draft `CHECK_CONTRADICTIONS` and
-   `RESOLVE_QUERY_STATE` pseudocode, review line by line before typing.
-8. Write the first CTE by hand, against the real schema, for single-hop lookup
-   before attempting 2-hop chains.
-
-### Still needed before SL4 code (discovered during build check)
-
-9. **Add indexes on `entity_relations.from_entity_id` and
-   `entity_relations.to_entity_id`** — the decision log specified these but
-   they were never created. CTE recursive joins on these columns; without
-   indexes, every hop full-scans the edge table.
-10. **Fix `RelationshipSourceBase` schema** — model and migration have
-    `source_author`/`source_title`, but the Pydantic schema doesn't expose
-    them. Won't block SL4 but should be fixed for consistency.
-
-### Open / not yet decided
-- `CONFLICT_PAIRS` draft in §4.2 needs finalization against the real 62 types
-- No SL4 code written yet — build starting now
-- Diagram rendering and research-notebook feature are named but unscoped
-  beyond the paragraph above
-
-
-## 11. Out of Scope
-
-- **pyDatalog / logic programming:** Deferred. May be added later for open-ended reasoning (e.g. Ùmà queries), but not part of SL4 core.
-- **Embeddings / vector search:** Belongs to Litsi, not SL4. SL4 is purely symbolic.
-- **Real-time updates:** SL4 queries run on committed data. No streaming/incremental updates.
+- **pyDatalog / logic programming:** Deferred. May be added later for open-ended reasoning (e.g. Ùmà queries), but not part of engine core.
+- **Embeddings / vector search:** Belongs to Litsi, not the engine. The engine is purely symbolic.
+- **Real-time updates:** Engine queries run on committed data. No streaming/incremental updates.
 - **Graph visualization:** Future frontend concern, not part of query engine.

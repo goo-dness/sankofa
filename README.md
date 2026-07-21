@@ -33,19 +33,17 @@ Sankofa is built in four layers:
 
 ```
 ┌─────────────────────────────────────┐
-│  SL5  Natural Language (Litsi AI)   │
+│  Layer 4  Ùmà Layer                 │
 ├─────────────────────────────────────┤
-│  SL4  Query Engine                  │
+│  Layer 3  AI Layer (Litsi)          │
 ├─────────────────────────────────────┤
-│  SL3  Symbolic Expression Engine    │
+│  Layer 2  Computational Engine      │
 ├─────────────────────────────────────┤
-│  SL2  African Knowledge Corpus      │
-├─────────────────────────────────────┤
-│  SL1  Atax LLM Runtime (2028+)      │
+│  Layer 1  Knowledge Foundation      │
 └─────────────────────────────────────┘
 ```
 
-The current build targets **SL2 and SL4** — the corpus and the query engine. The natural language layer (Litsi) follows.
+The current build targets **Layer 1 (complete)** and **Layer 2 (in progress)** — the knowledge foundation and the computational engine. The AI layer (Litsi) follows.
 
 ---
 
@@ -225,7 +223,7 @@ uvicorn main:app --reload
 | Phase 1 | Knowledge Engine — entities, relationships, corpus | Done |
 | Phase 2 | WHO GHO data ingestion pipeline | Done |
 | Phase 3 | OpenAlex, PubMed, ChEMBL pipelines | Done |
-| Phase 4 | Query Engine (SL4) — pyDatalog symbolic reasoning | In Progress |
+| Phase 4 | Computational Symbolic Engine — recursive CTEs + Python | In Progress |
 | Phase 5 | Community + Learning Center | Planned |
 | Phase 6 | Litsi — Natural Language Layer | Planned |
 
