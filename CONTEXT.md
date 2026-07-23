@@ -16,6 +16,15 @@ The core complaint Sankofa exists to answer: general-purpose tools like Wolfram 
 
 **First domain:** Healthcare.
 
+### Sankofa Engine — Layers
+
+| Layer | Name | Status | What it does |
+|-------|------|--------|-------------|
+| 1 | Knowledge Foundation | ✅ Complete | Data ingestion and database. WHO, OpenAlex, PubMed, ChEMBL pipelines. Entities and relationships, confidence tiers, evidence weighing. |
+| 2 | Computational Symbolic Engine | 🔄 In progress | Reasoning over the knowledge graph using recursive CTEs. weighing.py — weighs confidence and evidence counts. |
+| 3 | AI Layer (Litsi) | ⏳ Next | Interprets and explains what the engine computes. RAG pipeline connecting Claude API to PostgreSQL. Architecturally distinct from the symbolic core — embeddings belong to Litsi, not to Sankofa's computation engine. |
+| 4 | Ùmà Layer | 🔮 Final | Formalizes indigenous knowledge as computable reasoning. May use a logic-programming layer (pyDatalog or kanren) on top of the CTE foundation. |
+
 ### Long-Term Domain Scope
 
 Healthcare is the first domain — not the only one. Sankofa's long-term ambition is breadth comparable to Wolfram Alpha's. Confirmed directly against Wolfram Language's own Documentation Center category list (screenshotted June 2026) as a reference point for the scale of "computational knowledge engine":
@@ -24,7 +33,7 @@ Core Language & Structure, Data Manipulation & Analysis, Visualization & Graphic
 
 Domains explicitly named for Sankofa's own expansion, beyond healthcare: general medicine, mathematics, biology, chemistry, economics, astronomy, space science — with more still to be scoped as the project matures.
 
-This is a long-term expansion target, not a near-term build item. Healthcare remains the proving ground — the ingestion pattern, the evidence-weighing system (§5), the relationship-type vocabulary approach, and the eventual SL4 query engine are all being built here first specifically so they generalize cleanly to these other domains later, rather than being healthcare-specific one-offs.
+This is a long-term expansion target, not a near-term build item. Healthcare remains the proving ground — the ingestion pattern, the evidence-weighing system (§5), the relationship-type vocabulary approach, and the eventual Computational Symbolic Engine (Layer 2) are all being built here first specifically so they generalize cleanly to these other domains later, rather than being healthcare-specific one-offs.
 
 ---
 
@@ -44,10 +53,18 @@ sankofa/
 │   ├── entity_sources.py
 │   ├── entity_people.py
 │   ├── relationship_sources.py
-│   └── relations_type.py
+│   ├── relations_type.py
+│   └── coverage.py       (IngestionCoverage — three-state awareness)
 ├── schemas/              (mirrors models, ConfigDict from_attributes=True)
 ├── routers/
 │   └── entities.py       (no crud.py — routers handle DB ops directly)
+├── computation/           (Computational Symbolic Engine — Layer 2)
+│   ├── __init__.py
+│   ├── queries.py         (CTE SQL queries)
+│   ├── executor.py        (execute_single_hop, execute_two_hop, etc.)
+│   ├── weighing.py        (aggregate_confidence, aggregate_evidence, weigh_chain)
+│   ├── contradictions.py  (detect_contradictions, CONFLICT_PAIRS)
+│   └── epistemic.py       (resolve_epistemic_state, EpistemicState enum)
 ├── data/
 │   ├── relationship_types.py
 │   └── seed.py           (owns all orchestrator functions — run_who(), run_openalex(), run_pubmed())
@@ -79,6 +96,9 @@ sankofa/
 Lives in the DB, not an enum. 50+ seeded relationships across domains: pathology, epidemiology, pharmacology, molecular, ethnomedicine, clinical, genetics, institutional, general. Includes `causes`, `treats`, `traditionally_treats`, `prevalent_in`, `studied_by`, `protective_against`, `structurally_similar_to`, and more — see `data/relationship_types.py` for the full list.
 
 **Other tables (not yet populated by any ingestion):** `entity_names`, `entity_people`.
+
+**ingestion_coverage**
+`id, domain, disease_name, source_name, last_ingested_at` — tracks which diseases have been ingested by which sources. Enables three-state epistemic awareness (§9). Unique constraint on `(disease_name, source_name)`. Populated by each ingestion pipeline via `record_coverage()` in `data/seed.py`.
 
 **Confidence tiers:** 1 = Traditional, 2 = Emerging, 3 = Established.
 
@@ -123,7 +143,7 @@ All ingestions follow the same three-stage pattern: **extract → transform → 
 
 
 ### Scope decision (locked)
-No further new data sources after ChEMBL. Europe PMC was on the original roadmap but has been deliberately dropped — the priority now is finishing ChEMBL and moving straight into the SL4 query engine (pyDatalog). Ethnomedicine-focused ingestion (§7) remains the identified strategic gap but is explicitly deferred past the query engine, not before it — "build fast" means no more dataset detours until there's a working reasoning layer.
+No further new data sources after ChEMBL. Europe PMC was on the original roadmap but has been deliberately dropped — the priority now is finishing ChEMBL and moving straight into the Computational Symbolic Engine (Layer 2). Ethnomedicine-focused ingestion (§7) remains the identified strategic gap but is explicitly deferred past the engine, not before it — "build fast" means no more dataset detours until there's a working reasoning layer.
 
 ---
 
@@ -182,7 +202,7 @@ Also currently unpopulated: the genetic/protective layer (`protective_against`, 
 
 ---
 
-## 9. SL4 Query Engine — Formal Design Requirement (not yet built)
+## 9. Computational Symbolic Engine (Layer 2) — Formal Design Requirement (not yet built)
 
 **Requirement: Three-state epistemic awareness.**
 
@@ -196,19 +216,19 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 **Implementation note:** `evidence_count = 0` cannot currently exist by design (relationships only get created when evidence exists), so absence-in-graph already correctly means "no evidence found during ingestion." The query engine needs to surface this classification explicitly at answer time, not just return empty.
 
-**Future dependency:** fully distinguishing state 2 from state 3 will eventually require a coverage registry — a record of which domains/diseases/sources have actually been ingested. Deferred until after SL4's first working version, but the response structure should be designed to accommodate it later.
+**Coverage registry:** the `ingestion_coverage` table (§3) tracks which diseases have been ingested by which sources, enabling full three-state epistemic awareness. Each pipeline writes a row via `record_coverage()` in `data/seed.py`.
 
 ---
 
 ## 10. Roadmap
 
-**Immediate (locked, no further additions):** ChEMBL ingestion → straight into the SL4 query engine. PubMed is done; Europe PMC has been deliberately dropped from the plan; ethnomedicine-targeted ingestion is deferred until after the query engine exists, not before.
+**Immediate (locked, no further additions):** ChEMBL ingestion → straight into the Computational Symbolic Engine (Layer 2). PubMed is done; Europe PMC has been deliberately dropped from the plan; ethnomedicine-targeted ingestion is deferred until after the engine exists, not before.
 
 **Current status (July 2026):** paused on heavy implementation to close a foundational gap — working through Charles Petzold's *Code* to understand what Python and the underlying hardware are actually doing, rather than continuing to translate pseudocode into syntax without full comprehension. Still coding in small amounts (bug fixes, small additions) during this period, not fully stopped. This directly feeds the eventual C/CPython-internals work needed for OpenShark later — not a detour from the long-term arc, front-loaded foundation for it.
 
-**After ChEMBL:** SL4 query engine — symbolic reasoning layer, pyDatalog. This is where the three-state epistemic awareness requirement (§9) gets implemented, and where confidence/evidence_count actually get *used* in synthesized answers rather than just stored.
+**After ChEMBL:** Computational Symbolic Engine (Layer 2) — recursive CTEs + plain Python. This is where the three-state epistemic awareness requirement (§9) gets implemented, and where confidence/evidence_count actually get *used* in synthesized answers rather than just stored. Code lives in `computation/` (internal codename; the engine itself is Layer 2, not a separate "SL4" product).
 
-**After the query engine:** frontend, then Litsi — the AI layer (RAG pipeline connecting Claude API to PostgreSQL), kept architecturally distinct from Sankofa's symbolic core. Embeddings belong to Litsi, not to Sankofa's computation engine — this separation is deliberate and must be maintained.
+**After the engine:** frontend, then Litsi (Layer 3) — the AI layer (RAG pipeline connecting Claude API to PostgreSQL), kept architecturally distinct from the symbolic core. Embeddings belong to Litsi, not to the computation engine — this separation is deliberate and must be maintained.
 
 **Long-term (5-company, 10-year arc):** Space Catalog (deployed) → Sankofa Engine (active) → Litsi → OpenShark/Atax LLM Runtime (C, hardware-agnostic AI inference runtime, 2027–2028+) → embedded/chip-level work.
 
@@ -288,7 +308,7 @@ slice before generalizing to a rule-registration framework.
 
 ### 2026-07-19 — Recursive CTE reasoning engine: dumb traversal, Python interpretation, cycle/depth/row guards
 
-**Decided:** The SL4 multi-hop reasoning engine uses a recursive CTE
+**Decided:** The Computational Symbolic Engine (Layer 2) multi-hop reasoning uses a recursive CTE
 (`WITH RECURSIVE`) over `entity_relationships` that returns raw
 hop-by-hop paths only (entity IDs, relationship IDs, per-hop confidence)
 — no interpretation happens in SQL. Cycle protection via a visited-
@@ -316,12 +336,12 @@ depth, row-capped, cycle-guarded.
 
 ### 2026-07-18 — SL4 architecture documented
 
-**Decided:** Full SL4 architecture written to `SL4_ARCHITECTURE.md` in project root.
+**Decided:** Full architecture written to `SL4_ARCHITECTURE.md` in project root.
 Includes: CTE query patterns (single-hop, 2-hop recursive, bidirectional, path-finding),
 Python evidence-weighing layer, contradiction detection, three-state epistemic resolution,
-API router endpoints, coverage registry schema, and file structure for `app/sl4/` module.
+API router endpoints, coverage registry schema, and file structure for `computation/` module.
 
-**Status:** Design phase. Phase 1 (single-hop CTEs + evidence weighing) is the minimum viable SL4.
+**Status:** Design phase. Phase 1 (single-hop CTEs + evidence weighing) is the minimum viable engine.
 
 ### 2026-07-18 — Pseudocode-first enforced for assistant interactions
 
@@ -342,13 +362,13 @@ editing ingestion/model/migration code directly.
 
 ### 2026-07-18 — Staged approach: CTEs permanent, logic layer optional and deferred
 
-**Decided:** Postgres recursive CTEs + plain Python are SL4's permanent
+**Decided:** Postgres recursive CTEs + plain Python are the engine's permanent
 foundation, not a placeholder. A logic-programming layer (pyDatalog or
 kanren, tool choice deferred) may be added later, on top of that
 foundation, only for reasoning that genuinely needs it (e.g. Ùmà, or
 open-ended analogical reasoning) — not as a replacement for the core.
 **Why:** Decouples two separate questions that kept getting tangled: "is
-the SL4 core reasoning engine correct" (yes — bounded, predictable
+the core reasoning engine correct" (yes — bounded, predictable
 traversal, settled independent of any library's maintenance status) vs.
 "is a specific optional add-on library worth adding later" (an open
 question, revisited when that phase actually starts).
@@ -356,19 +376,19 @@ question, revisited when that phase actually starts).
 maintenance was restarted June 2026, prompted by the project passing 300
 GitHub stars — verified directly against the source, not secondhand.
 This reopens it as a fair candidate alongside kanren for the future
-layer, but does not change the SL4-core decision, since that was based on
+layer, but does not change the core decision, since that was based on
 unification/backtracking search being unpredictable for live query-serving,
 a property of execution model, not maintenance status.
 **Rules out:** Nothing further needs deciding on this topic until the
 Ùmà layer or a genuinely open-ended reasoning query is actually being
 scoped.
-**Unblocks:** SL4 build proceeds with no outstanding tooling questions.
+**Unblocks:** Engine build proceeds with no outstanding tooling questions.
 
 
 
-### 2026-07-18 — SL4 built on Postgres recursive CTEs + plain Python, not a logic-programming engine
+### 2026-07-18 — Engine built on Postgres recursive CTEs + plain Python, not a logic-programming engine
 
-**Decided:** SL4's multi-hop traversal uses Postgres `WITH RECURSIVE` CTEs.
+**Decided:** The Computational Symbolic Engine (Layer 2) multi-hop traversal uses Postgres `WITH RECURSIVE` CTEs.
 Contradiction detection and three-state resolution (known / knowably-absent /
 uncharted) are implemented as plain Python functions operating on query
 results, not as a rule engine.
@@ -385,7 +405,7 @@ production Datalog engines like CodeQL/Soufflé deliberately avoid it for
 query-serving roles). A custom-built query language (Wolfram-scale
 engineering cost, no added reasoning power over what's already decided
 here).
-**Unblocks:** SL4 build can proceed without further tooling evaluation.
+**Unblocks:** Engine build can proceed without further tooling evaluation.
 
 
 ### 2026-07-18 — entity_sources / relationship_sources need author + title fields
@@ -454,7 +474,7 @@ or without mesh_id). Blocked externally, not by any Sankofa-side bug. Check
 http://chembl.github.io/status/ before resuming. No further ChEMBL ingestion work
 until that clears.
 
-**Next:** Move to SL4 / pyDatalog symbolic reasoning layer while ChEMBL is
+**Next:** Move to Computational Symbolic Engine (Layer 2) while ChEMBL is
 externally blocked - per roadmap, this was next after ingestion regardless.
 
 
@@ -501,6 +521,6 @@ ingestions going forward, not just ChEMBL.
 
 **Rules out:** Silent build-then-launch approach.
 
-**Unblocks:** A running content/posting queue can now be drawn from real build milestones (evidence-weighing redesign, ChEMBL debugging, SL4 design calls, etc.) whenever the developer is ready to post.
+**Unblocks:** A running content/posting queue can now be drawn from real build milestones (evidence-weighing redesign, ChEMBL debugging, engine design calls, etc.) whenever the developer is ready to post.
 
 **Note:** this is about visibility and audience-building, not user distribution — the §8 "narrow before broad" plan for onboarding actual researchers (warm introductions, not public launch) still stands. Building in public grows awareness of the project; it doesn't mean opening the product itself to broad use before the query engine exists.
