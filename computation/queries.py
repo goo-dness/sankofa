@@ -217,6 +217,7 @@ PATH_QUERY = text("""
         JOIN relationship_types rt ON er.relationship_id = rt.id
         WHERE ps.depth < :max_depth
             AND er.to_entity_id != ALL(ps.visited)
+            AND ps.t_entity_id != : end_entity_id
     )
     SELECT
         e1.name AS from_name,
