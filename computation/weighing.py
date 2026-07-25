@@ -48,11 +48,11 @@ def weigh_derived_fact(premises: list[dict]) -> dict:
     Score a derived fact from its premises.
     Each premise dict must have:
         - "confidence": int(1-3), the discrete tier
-        - "depth": int, how many hops deep this premise itself is (0 if obdserved)
+        - "depth": int, how many hops deep this premise itself is (0 if observed)
 
     Returns:
         - "score": float, the continuous derived score
-        - "tier": int, the discrete tier (capped by min premise tiers)
+        - "confidence": int, the discrete tier (capped by min premise tiers)
         - "depth": int, the depth of the derived fact
     """
 
@@ -69,11 +69,11 @@ def weigh_derived_fact(premises: list[dict]) -> dict:
     score = combined * (DECAY ** depth)
 
     # tier cap: derived fact can never exceed min(premise tier)
-    min_premise_tier = mi(p["confindence"] for p in premises)
+    min_premise_tier = min(p["confidence"] for p in premises)
     derived_tier = min(score_to_tier(score), min_premise_tier)
 
     return {
         "score": round(score, 4),
-        "tier": derived_tier,
+        "confidence": derived_tier,
         "depth": depth,
     }

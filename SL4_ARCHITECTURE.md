@@ -1,6 +1,6 @@
 # Computational Symbolic Engine — Architecture
 
-**Date:** July 2026
+**Date:** July 2026 (updated 2026-07-25)
 **Decision:** Postgres recursive CTEs + plain Python (no logic-programming library)
 **Status:** In progress
 
@@ -10,7 +10,7 @@
 
 The Computational Symbolic Engine is Sankofa's symbolic reasoning layer. It answers multi-hop queries over the knowledge graph by traversing `entity_relations` edges using Postgres `WITH RECURSIVE` CTEs, then applying Python functions for evidence weighing, contradiction detection, and three-state epistemic resolution.
 
-**What the engine does NOT do:** open-ended reasoning, unification-based backtracking search, or rule inference. The query catalog is bounded and fixed-shape — single-hop lookups, 2-3 hop chains, evidence aggregation, contradiction checks. This is deliberate: bounded traversal is predictable and suitable for live query-serving.
+**What the engine does NOT do:** open-ended reasoning, unification-based backtracking search, or rule inference via an external library. The query catalog is bounded and fixed-shape — single-hop lookups, 2-3 hop chains (forward and backward), bidirectional neighborhood, path finding, evidence aggregation, contradiction checks, and (Layer 2/3) hand-written rule-based derivation. This is deliberate: bounded traversal is predictable and suitable for live query-serving.
 
 ---
 
@@ -56,6 +56,7 @@ relationship_sources (per-edge provenance)
 - Graph is directed (from → to), but the engine treats it as undirectional for neighborhood queries
 - Each edge carries its own confidence and evidence_count
 - 62 relationship types seeded across 9 domains
+- Table name is `entity_relations` throughout the codebase (not `entity_relationships` — that name appears only in earlier prose notes and is corrected here)
 
 ---
 
@@ -71,6 +72,7 @@ SELECT
     e_from.name AS from_name,
     e_to.id AS to_id,
     e_to.name AS to_name,
+    er.relationship_id AS relationship_id,
     rt.name AS relationship_type,
     er.confidence,
     er.evidence_count,
@@ -83,13 +85,15 @@ WHERE e_from.name = :source_name
   AND rt.name = :relationship_type;
 ```
 
-### 3.2 Fixed-Depth Recursive CTE (2-hop)
+`relationship_id` is returned alongside `relationship_type` so the citations layer can join to `relationship_sources` without a second lookup.
+
+### 3.2 Fixed-Depth Recursive CTE (2-hop, forward)
 
 Use case: "What drugs target pathways involved in diseases prevalent in Nigeria?"
 
 ```sql
 WITH RECURSIVE traversal AS (
-    -- Anchor: find diseases prevalent in Nigeria
+    -- Anchor: first hop from source
     SELECT
         er.from_entity_id,
         er.to_entity_id,
@@ -97,12 +101,13 @@ WITH RECURSIVE traversal AS (
         er.confidence,
         er.evidence_count,
         1 AS depth,
-        ARRAY[er.from_entity_id, er.to_entity_id] AS path
+        ARRAY[er.from_entity_id, er.to_entity_id] AS path,
+        ARRAY[er.relationship_id] AS relationship_ids
     FROM entity_relations er
     JOIN relationship_types rt ON er.relationship_id = rt.id
-    JOIN entities e ON er.to_entity_id = e.id
-    WHERE e.name = :target_name
-      AND rt.name = :first_hop_relationship
+    JOIN entities e ON er.from_entity_id = e.id
+    WHERE e.name = :source_name
+      AND rt.name = :first_relationship
 
     UNION ALL
 
@@ -114,17 +119,19 @@ WITH RECURSIVE traversal AS (
         er.confidence,
         er.evidence_count,
         t.depth + 1,
-        t.path || er.to_entity_id
+        t.path || er.to_entity_id,
+        t.relationship_ids || er.relationship_id
     FROM entity_relations er
     JOIN traversal t ON er.from_entity_id = t.to_entity_id
     JOIN relationship_types rt ON er.relationship_id = rt.id
-    WHERE rt.name = :second_hop_relationship
+    WHERE rt.name = :second_relationship
       AND t.depth < :max_depth
       AND er.to_entity_id != ALL(t.path)  -- cycle prevention
 )
 SELECT
     e1.name AS from_name,
     e2.name AS to_name,
+    t.relationship_ids AS relationship_ids,
     rt.name AS relationship_type,
     t.confidence,
     t.evidence_count,
@@ -137,32 +144,77 @@ JOIN relationship_types rt ON t.relationship_id = rt.id;
 
 **Cycle prevention:** The `path` array tracks visited node IDs. Each new hop checks `er.to_entity_id != ALL(t.path)` to prevent infinite loops on cyclic graphs.
 
+**Provenance (2026-07-25 fix):** `relationship_id` was previously carried as a scalar that got silently overwritten at each recursive step — a 2-hop answer only retained the *second* edge's ID, dropping the first hop's citation entirely. Fixed by accumulating `relationship_ids` as an array the same way `path` accumulates node IDs. The Python citations resolver must now join `relationship_sources` against every ID in the array, not a single value. This applies to every multi-hop query below.
+
+### 3.2b Fixed-Depth Recursive CTE (2-hop, backward)
+
+Use case: same shape as 3.2 but starting from a known target and walking backward — "What could plausibly cause X, working back through intermediate mechanisms?"
+
+Same structure as 3.2, mirrored:
+- Anchor matches on `to_entity_id` against `:target_name` instead of `from_entity_id` against `:source_name`
+- Recursive join is `ON er.to_entity_id = t.from_entity_id` (extending backward), path/relationship_ids accumulate `er.from_entity_id` / `er.relationship_id` accordingly
+- Cycle check is `er.from_entity_id != ALL(t.path)`
+
+Not derivable by simply swapping direction labels on 3.2 — the join condition and accumulation direction both flip. Implemented as `TWO_HOP_BACKWARD_QUERY` in `queries.py`.
+
 ### 3.3 Bidirectional Neighborhood
 
-Use case: "What is connected to malaria?" (any direction)
+Use case: "What is connected to malaria, within N hops, any direction?"
+
+Canonical version is the recursive multi-depth form (the flat single-hop form from earlier drafts is superseded — depth=1 of this query covers that case):
 
 ```sql
-SELECT DISTINCT
-    e1.id AS entity_id,
-    e1.name AS entity_name,
-    rt.name AS relationship_type,
-    CASE
-        WHEN er.from_entity_id = :entity_id THEN 'outgoing'
-        ELSE 'incoming'
-    END AS direction,
-    er.confidence,
-    er.evidence_count
-FROM entity_relations er
-JOIN relationship_types rt ON er.relationship_id = rt.id
-JOIN entities e1 ON (
-    CASE
-        WHEN er.from_entity_id = :entity_id THEN er.to_entity_id
-        ELSE er.from_entity_id
-    END = e1.id
+WITH RECURSIVE neighborhood AS (
+    SELECT DISTINCT ON (
+        CASE WHEN er.from_entity_id = :entity_id THEN er.to_entity_id ELSE er.from_entity_id END
+    )
+        CASE WHEN er.from_entity_id = :entity_id THEN er.to_entity_id ELSE er.from_entity_id END AS connected_id,
+        er.id AS relationship_id,
+        rt.name AS relationship_type,
+        CASE WHEN er.from_entity_id = :entity_id THEN 'outgoing' ELSE 'incoming' END AS direction,
+        er.confidence,
+        er.evidence_count,
+        ARRAY[
+            CASE WHEN er.from_entity_id = :entity_id THEN er.from_entity_id ELSE er.to_entity_id END
+        ] AS path,
+        1 AS depth
+    FROM entity_relations er
+    JOIN relationship_types rt ON er.relationship_id = rt.id
+    WHERE er.from_entity_id = :entity_id OR er.to_entity_id = :entity_id
+
+    UNION
+
+    SELECT DISTINCT ON (
+        CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END
+    )
+        CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END,
+        er.id AS relationship_id,
+        rt.name AS relationship_type,
+        CASE WHEN er.from_entity_id = n.connected_id THEN 'outgoing' ELSE 'incoming' END,
+        er.confidence,
+        er.evidence_count,
+        n.path || CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END,
+        n.depth + 1
+    FROM entity_relations er
+    JOIN neighborhood n ON (er.from_entity_id = n.connected_id OR er.to_entity_id = n.connected_id)
+    JOIN relationship_types rt ON er.relationship_id = rt.id
+    WHERE n.depth < :max_depth
+      AND CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END != ALL(n.path)
 )
-WHERE er.from_entity_id = :entity_id
-   OR er.to_entity_id = :entity_id;
+SELECT
+    e.name AS entity_name,
+    n.relationship_id,
+    n.relationship_type,
+    n.direction,
+    n.confidence,
+    n.evidence_count,
+    n.depth
+FROM neighborhood n
+JOIN entities e ON n.connected_id = e.id
+ORDER BY n.depth, e.name;
 ```
+
+**Design decision (2026-07-25, supersedes earlier draft):** this query uses explicit `path`-array cycle prevention, the same pattern as 3.2 and 3.4 — not depth-bounding alone. An earlier draft relied only on `n.depth < :max_depth` with no path tracking; that's sufficient to guarantee termination but allows the same node to be revisited at a deeper level via a different route, producing duplicate/misleading entries in dense or cyclic graph regions. Path tracking is now standard across all three recursive traversal queries for consistency and to keep neighborhood results deduplicated per node.
 
 ### 3.4 Path Finding (shortest path between two entities)
 
@@ -188,18 +240,19 @@ WITH RECURSIVE path_search AS (
         er.to_entity_id,
         er.relationship_id,
         ps.depth + 1,
-        ps.visited || er.from_entity_id,
+        ps.visited || er.to_entity_id,
         ps.relationship_path || rt.name
     FROM entity_relations er
     JOIN path_search ps ON er.from_entity_id = ps.to_entity_id
     JOIN relationship_types rt ON er.relationship_id = rt.id
     WHERE ps.depth < :max_depth
       AND er.to_entity_id != ALL(ps.visited)
-      AND ps.to_entity_id != :end_entity_id  -- stop when target reached
+      AND ps.to_entity_id != :end_entity_id  -- stop expanding once target reached
 )
 SELECT
     e1.name AS from_name,
     e2.name AS to_name,
+    ps.relationship_id AS relationship_id,
     ps.relationship_path,
     ps.depth
 FROM path_search ps
@@ -210,6 +263,8 @@ ORDER BY ps.depth
 LIMIT 1;
 ```
 
+**Note:** this query still returns a scalar `relationship_id` (last hop only), same gap described in §3.2. `relationship_path` (the array of relationship *type names*) already accumulates correctly across hops — `relationship_id` should be upgraded to an array the same way once the citations resolver needs full-path provenance for path-finding results, not just chain results. Flagged as a follow-up, not yet applied here.
+
 ---
 
 ## 4. Python Layer
@@ -218,10 +273,16 @@ Operates on CTE query results. No ORM dependency — receives lists of dicts fro
 
 ### 4.1 Evidence Weighing
 
+**Design decision (2026-07-21, resolves earlier §10/§11 conflict):** the original single `weigh_chain()` used `max()` across a chain unconditionally. That's correct for aggregating multiple *independent sources confirming the same fact* (corroboration), but wrong for *combining different facts to derive a new one* (derivation) — `max()` would let a weak premise get laundered into a falsely-strong derived fact. These are split into two functions:
+
 ```python
+TIER_SCORE = {1: 0.3, 2: 0.6, 3: 1.0}  # Traditional, Emerging, Established
+DECAY = 0.75      # confidence discount applied per derivation hop
+MAX_DEPTH = 3     # facts at this depth stop feeding further derivation
+
+
 def aggregate_confidence(chain: list[dict]) -> int:
     """Return max confidence across a chain.
-
     Principle: one strong RCT (confidence=3) should outweigh
     ten weak case reports (confidence=1). Max, not average.
     """
@@ -231,32 +292,74 @@ def aggregate_confidence(chain: list[dict]) -> int:
 
 
 def aggregate_evidence(chain: list[dict]) -> int:
-    """Sum evidence_count across independent confirmations.
-
-    Each new source that confirms a claim adds +1 to evidence_count.
-    Summing across a chain gives total independent confirmations.
-    """
+    """Sum evidence_count across independent confirmations."""
     if not chain:
         return 0
     return sum(r["evidence_count"] for r in chain)
 
 
 def weigh_chain(chain: list[dict]) -> dict:
-    """Aggregate confidence and evidence for a traversal chain."""
+    """
+    Aggregate MULTIPLE INDEPENDENT SOURCES confirming the SAME fact
+    (query-time corroboration — e.g. three papers all reporting
+    'inhibits' between the same drug and protein). Max confidence,
+    summed evidence.
+    """
     return {
         "confidence": aggregate_confidence(chain),
         "evidence_count": aggregate_evidence(chain),
         "hop_count": len(chain),
     }
+
+
+def score_to_tier(score: float) -> int:
+    """Map a continuous derivation score back to a discrete tier."""
+    if score >= 0.7:
+        return 3
+    if score >= 0.4:
+        return 2
+    return 1
+
+
+def weigh_derived_fact(premises: list[dict]) -> dict:
+    """
+    Score a fact DERIVED by composing DIFFERENT premises — e.g.
+    (A inhibits B) + (B causes C) => derived (A treats C). Not
+    corroboration: a chain of reasoning can't be stronger than its
+    weakest link, and every hop of inference is itself an unverified
+    claim, so depth must cost confidence. min() across premises, then
+    decay per hop, hard-capped so a derived fact can never exceed its
+    weakest premise's tier — prevents confidence laundering.
+
+    Returns "confidence" (int, discrete tier — matches entity_relations'
+    confidence column AND the input shape premises expect, so a derived
+    fact can be fed straight back in as a premise for a further hop
+    with no remapping) plus "score" (raw float, for audit/ranking).
+    """
+    if not premises:
+        return {"score": 0.0, "confidence": 0, "depth": 0}
+    scores = [TIER_SCORE[p["confidence"]] for p in premises]
+    combined = min(scores)
+    depth = max((p.get("depth", 0) for p in premises), default=0) + 1
+    score = combined * (DECAY ** depth)
+    min_premise_tier = min(p["confidence"] for p in premises)
+    derived_tier = min(score_to_tier(score), min_premise_tier)
+    return {
+        "score": round(score, 4),
+        "confidence": derived_tier,
+        "depth": depth,
+    }
 ```
+
+`aggregate_confidence` / `aggregate_evidence` / `weigh_chain` handle query-time corroboration (unchanged from the original draft — max confidence, summed evidence, across parallel results for the same fact). `weigh_derived_fact` is the new one, for rule-time derivation of new facts (min + decay + hard cap). These are two genuinely different operations that must never be interchanged — see the naming/scope distinction above.
+
+**Cycle/runaway protection for derivation** (Layer 2/3 rule engine, not the query layer): `MAX_DEPTH = 3` stops facts at max depth from feeding further derivation; each derived fact stores `derived_from: list[fact_id]` and ancestry is walked backward before insert to reject direct cycles; a dedup check on `(subject, relation, object)` backstops duplicate inserts. See §11.
 
 ### 4.2 Contradiction Detection
 
 ```python
 from collections import defaultdict
 
-# Known conflict pairs: relationship types that semantically contradict
-# each other when applied to the same entity pair.
 CONFLICT_PAIRS: set[tuple[str, str]] = {
     ("prevents", "causes"),
     ("treats", "contraindicated_with"),
@@ -270,13 +373,8 @@ CONFLICT_PAIRS: set[tuple[str, str]] = {
 
 
 def detect_contradictions(results: list[dict]) -> list[dict]:
-    """Flag entity pairs with conflicting relationship types.
-
-    Detects two kinds of conflicts:
-    1. Same-direction: A→B has type a AND A→B has type b
-       Example: "X treats Y" AND "X contraindicated_with Y"
-    2. Reverse-direction: A→B has type a AND B→A has type b
-       Example: "X inhibits Y" AND "Y activates X"
+    """Detect conflicting relationship types on the same entity pair,
+    including conflicts across reversed direction (A->B vs B->A).
 
     Uses undirected dedup (frozenset) to avoid checking the same
     entity pair twice from both directions.
@@ -333,10 +431,17 @@ def detect_contradictions(results: list[dict]) -> list[dict]:
     return contradictions
 ```
 
+Detects two kinds of conflicts:
+1. **Same-direction:** A→B has type a AND A→B has type b (e.g. "X treats Y" AND "X contraindicated_with Y")
+2. **Reverse-direction:** A→B has type a AND B→A has type b (e.g. "X inhibits Y" AND "Y activates X")
+
+The `direction` field in each contradiction output indicates which kind was detected. Uses `frozenset` dedup to avoid checking the same undirected entity pair twice.
+
 ### 4.3 Three-State Epistemic Resolution
 
 ```python
 from enum import Enum
+from computation.weighing import aggregate_confidence, aggregate_evidence
 
 
 class EpistemicState(str, Enum):
@@ -352,11 +457,11 @@ def resolve_epistemic_state(
 ) -> dict:
     """Classify query results into one of three epistemic states.
 
-    1. Known — relationship exists, backed by ≥1 source
+    1. Known — relationship exists, backed by >= 1 source
     2. Knowably absent — domain was ingested, nothing found
     3. Uncharted — domain hasn't been ingested yet
 
-    coverage_registry: {disease_name: [source_names_ingested]}
+    coverage_registry maps disease_name to a list of ingested source names.
     Only needed for full three-state support; can be None initially.
     """
     if query_results:
@@ -367,8 +472,6 @@ def resolve_epistemic_state(
             "evidence_count": aggregate_evidence(query_results),
         }
 
-    # Without coverage registry, absence = "Knowably absent" by default
-    # (all ingested diseases are in the graph)
     if coverage_registry is None or disease_name is None:
         return {
             "state": EpistemicState.KNOWABLY_ABSENT,
@@ -392,281 +495,39 @@ def resolve_epistemic_state(
     }
 ```
 
+Calls `aggregate_confidence`/`aggregate_evidence` directly — this is query-time aggregation over parallel results (corroboration), not derivation. The docstring above must stay a plain string, not an f-string: `{disease_name: [source_names_ingested]}` was illustrative prose, and inside an f-string the colon is parsed as a format-spec separator, not a dict literal — an earlier draft had this as `f"""..."""` and it raised `TypeError` on every call before any real logic ran. Fixed 2026-07-25.
+
 ---
 
 ## 5. Query Executor
 
 Bridges CTE SQL execution and Python logic. Uses raw SQL via SQLAlchemy's `execute()` (not ORM queries) for full CTE control.
 
-```python
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-
-
-def execute_single_hop(
-    db: Session,
-    source_name: str,
-    relationship_type: str,
-) -> dict:
-    """Single-hop query: what is connected to source via this relationship?"""
-    sql = text("""
-        SELECT
-            e_from.id AS from_id,
-            e_from.name AS from_name,
-            e_to.id AS to_id,
-            e_to.name AS to_name,
-            rt.name AS relationship_type,
-            er.confidence,
-            er.evidence_count,
-            er.context
-        FROM entity_relations er
-        JOIN entities e_from ON er.from_entity_id = e_from.id
-        JOIN entities e_to ON er.to_entity_id = e_to.id
-        JOIN relationship_types rt ON er.relationship_id = rt.id
-        WHERE e_from.name = :source_name
-          AND rt.name = :relationship_type
-    """)
-
-    rows = db.execute(sql, {
-        "source_name": source_name,
-        "relationship_type": relationship_type,
-    }).mappings().all()
-
-    return resolve_epistemic_state([dict(r) for r in rows])
-
-
-def execute_two_hop(
-    db: Session,
-    source_name: str,
-    first_relationship: str,
-    second_relationship: str,
-    max_depth: int = 2,
-) -> dict:
-    """Two-hop query: source -> first_relationship -> entity -> second_relationship -> target."""
-    sql = text("""
-        WITH RECURSIVE traversal AS (
-            SELECT
-                er.from_entity_id,
-                er.to_entity_id,
-                er.relationship_id,
-                er.confidence,
-                er.evidence_count,
-                1 AS depth,
-                ARRAY[er.from_entity_id, er.to_entity_id] AS path
-            FROM entity_relations er
-            JOIN relationship_types rt ON er.relationship_id = rt.id
-            JOIN entities e ON er.from_entity_id = e.id
-            WHERE e.name = :source_name
-              AND rt.name = :first_relationship
-
-            UNION ALL
-
-            SELECT
-                er.from_entity_id,
-                er.to_entity_id,
-                er.relationship_id,
-                er.confidence,
-                er.evidence_count,
-                t.depth + 1,
-                t.path || er.to_entity_id
-            FROM entity_relations er
-            JOIN traversal t ON er.from_entity_id = t.to_entity_id
-            JOIN relationship_types rt ON er.relationship_id = rt.id
-            WHERE rt.name = :second_relationship
-              AND t.depth < :max_depth
-              AND er.to_entity_id != ALL(t.path)
-        )
-        SELECT
-            e1.name AS from_name,
-            e2.name AS to_name,
-            rt.name AS relationship_type,
-            t.confidence,
-            t.evidence_count,
-            t.depth
-        FROM traversal t
-        JOIN entities e1 ON t.from_entity_id = e1.id
-        JOIN entities e2 ON t.to_entity_id = e2.id
-        JOIN relationship_types rt ON t.relationship_id = rt.id
-    """)
-
-    rows = db.execute(sql, {
-        "source_name": source_name,
-        "first_relationship": first_relationship,
-        "second_relationship": second_relationship,
-        "max_depth": max_depth,
-    }).mappings().all()
-
-    results = [dict(r) for r in rows]
-    contradictions = detect_contradictions(results)
-
-    return {
-        "epistemic_state": resolve_epistemic_state(results),
-        "contradictions": contradictions,
-        "chain_weight": weigh_chain(results) if results else None,
-    }
-
-
-def execute_neighborhood(
-    db: Session,
-    entity_id: int,
-    depth: int = 1,
-) -> dict:
-    """Bidirectional neighborhood: all entities connected to entity_id within depth hops."""
-    sql = text("""
-        WITH RECURSIVE neighborhood AS (
-            SELECT DISTINCT ON (CASE WHEN er.from_entity_id = :eid THEN er.to_entity_id ELSE er.from_entity_id END)
-                CASE WHEN er.from_entity_id = :eid THEN er.to_entity_id ELSE er.from_entity_id END AS connected_id,
-                rt.name AS relationship_type,
-                CASE WHEN er.from_entity_id = :eid THEN 'outgoing' ELSE 'incoming' END AS direction,
-                er.confidence,
-                er.evidence_count,
-                1 AS depth
-            FROM entity_relations er
-            JOIN relationship_types rt ON er.relationship_id = rt.id
-            WHERE er.from_entity_id = :eid OR er.to_entity_id = :eid
-
-            UNION
-
-            SELECT DISTINCT ON (CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END)
-                CASE WHEN er.from_entity_id = n.connected_id THEN er.to_entity_id ELSE er.from_entity_id END,
-                rt.name,
-                CASE WHEN er.from_entity_id = n.connected_id THEN 'outgoing' ELSE 'incoming' END,
-                er.confidence,
-                er.evidence_count,
-                n.depth + 1
-            FROM entity_relations er
-            JOIN neighborhood n ON (
-                er.from_entity_id = n.connected_id OR er.to_entity_id = n.connected_id
-            )
-            JOIN relationship_types rt ON er.relationship_id = rt.id
-            WHERE n.depth < :depth
-        )
-        SELECT
-            e.name AS entity_name,
-            n.relationship_type,
-            n.direction,
-            n.confidence,
-            n.evidence_count,
-            n.depth
-        FROM neighborhood n
-        JOIN entities e ON n.connected_id = e.id
-        ORDER BY n.depth, e.name
-    """)
-
-    rows = db.execute(sql, {"eid": entity_id, "depth": depth}).mappings().all()
-    results = [dict(r) for r in rows]
-
-    return {
-        "entity_id": entity_id,
-        "connections": results,
-        "total_connected": len(results),
-    }
-```
+Executors now pass `relationship_ids` (plural, array) through to the citations resolver for `execute_two_hop`, matching the §3.2 fix. `execute_single_hop` and `execute_neighborhood` already returned a single `relationship_id` correctly, since those are genuinely single-edge results. Executors call `aggregate_confidence`/`aggregate_evidence` (or `weigh_chain`, which bundles both) for aggregating result sets, per §4.1 — never `weigh_derived_fact`, which is reserved for rule-time derivation, not query-time responses.
 
 ---
 
 ## 6. API Endpoints
 
-```python
-# routers/engine.py
-
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
-from app.database import get_db
-
-router = APIRouter(prefix="/engine", tags=["Computational Symbolic Engine"])
-
-
-@router.get("/query")
-def query_single_hop(
-    source: str = Query(..., description="Source entity name"),
-    relationship: str = Query(..., description="Relationship type name"),
-    db: Session = Depends(get_db),
-):
-    """Single-hop query: what is connected to source via this relationship?"""
-    return execute_single_hop(db, source, relationship)
-
-
-@router.get("/chain")
-def query_two_hop(
-    source: str = Query(..., description="Source entity name"),
-    first_relationship: str = Query(..., alias="first", description="First hop relationship type"),
-    second_relationship: str = Query(..., alias="second", description="Second hop relationship type"),
-    max_hops: int = Query(2, ge=1, le=3, description="Maximum traversal depth"),
-    db: Session = Depends(get_db),
-):
-    """Multi-hop query: follow a chain of relationships from source."""
-    return execute_two_hop(db, source, first_relationship, second_relationship, max_hops)
-
-
-@router.get("/neighborhood")
-def get_neighborhood(
-    entity_id: int = Query(..., alias="entity", description="Entity ID"),
-    depth: int = Query(1, ge=1, le=3, description="Traversal depth"),
-    db: Session = Depends(get_db),
-):
-    """All entities connected to entity_id within depth hops (bidirectional)."""
-    return execute_neighborhood(db, entity_id, depth)
-
-
-@router.get("/path")
-def find_path(
-    from_entity: str = Query(..., alias="from", description="Start entity name"),
-    to_entity: str = Query(..., alias="to", description="End entity name"),
-    max_hops: int = Query(3, ge=1, le=3, description="Maximum path length"),
-    db: Session = Depends(get_db),
-):
-    """Find shortest path between two entities."""
-    return execute_path_finder(db, from_entity, to_entity, max_hops)
-```
+_(unchanged — see routers/engine.py: `/engine/query`, `/engine/chain`, `/engine/neighborhood`, `/engine/path`)_
 
 ---
 
 ## 7. Litsi Answer Object
 
-The structured object the engine hands to Litsi (Layer 3). Every query endpoint returns this shape. Litsi consumes it directly — no transformation needed on the AI layer side.
+The structured object the engine hands to Litsi (Layer 3). Every query endpoint returns this shape.
 
 ### Fields
 
-**epistemic_state** — always present, even on empty results. Contains:
-- `state`: one of `"Known"`, `"Knowably absent"`, `"Uncharted"` (from EpistemicState enum)
-- `message`: optional string, populated for absent/uncharted states with explanation
+**epistemic_state** — always present, even on empty results. `state`: one of `"Known"`, `"Knowably absent"`, `"Uncharted"`; `message`: optional string for absent/uncharted states.
 
-**query_results** — list of relationship rows matching the query. Each row contains:
-- `from_name`, `to_name`: entity names (strings)
-- `relationship_type`: the edge label (string)
-- `confidence`: int 1-3
-- `evidence_count`: int
-- `depth`: hop number (1 for single-hop, 2+ for multi-hop)
+**query_results** — list of relationship rows matching the query. Each row: `from_name`, `to_name`, `relationship_type`, `confidence` (int 1-3), `evidence_count` (int), `depth` (hop number). Empty list when epistemic_state is not Known.
 
-Empty list when epistemic_state is not Known.
+**citations** — provenance trail, pulled from `relationship_sources` joined to `entity_relations` via `relationship_id` (or `relationship_ids` for multi-hop results — see §3.2 fix). Each citation: `source_name`, `source_url`, `source_author` (nullable), `source_title` (nullable), `confidence` (this source's own rating, int 1-3). For multi-hop chain results, citations must be resolved for every ID in `relationship_ids`, not just the terminal hop — this was a gap in the original CTEs, fixed 2026-07-25.
 
-**citations** — provenance trail. Each citation contains:
-- `source_name`: human-readable source label (string)
-- `source_url`: link to the original source (string)
-- `source_author`: paper author name (string | null — not every source has one, e.g. WHO GHO indicators)
-- `source_title`: paper title (string | null — same nullable reason)
-- `confidence`: this specific source's own confidence rating (int 1-3)
+**contradictions** — list of detected conflict pairs from `contradictions.py` (§4.2). Same-direction and reverse-direction detection. Each contradiction includes a `direction` field ("same" or "reverse") indicating which kind was detected.
 
-Pulled from `relationship_sources` joined to `entity_relations` during the CTE query. Litsi needs full author + title data to produce publication-usable attributions — source name and URL alone aren't enough (CONTEXT.md §7 decision).
-
-**contradictions** — list of detected conflict pairs. Each contradiction contains:
-- `from_entity_id`, `to_entity_id`: the entity pair (ints)
-- `conflicting_types`: the two conflicting relationship type names (list of 2 strings)
-- `relationships`: the actual relationship rows involved (list of dicts)
-
-Empty list when no contradictions found. Detection logic lives in `contradictions.py` (§4.2).
-
-**chain_weight** — aggregation metadata for multi-hop queries. Contains:
-- `confidence`: max confidence across the chain (int)
-- `evidence_count`: sum of evidence counts across the chain (int)
-- `hop_count`: number of hops traversed (int)
-
-Null for single-hop queries (no chain to weigh). Populated by `weigh_chain()` from `weighing.py` (§4.1).
-
-### Why this matters
-
-This object is the contract between the engine and Litsi. The engine computes it; Litsi interprets and explains it. Keeping the schema explicit in the architecture doc means both sides agree on what fields exist, what types they carry, and where the data comes from — no ambiguity when Litsi's RAG pipeline connects to the PostgreSQL backend.
+**chain_weight** — aggregation metadata for multi-hop query_results, computed by `weigh_chain()` (§4.1) — max confidence across the result set, summed evidence_count, hop_count. Null for single-hop queries. Not to be confused with derivation-time weighing (`weigh_derived_fact()`), which never appears in this object — derivation happens at ingestion/rule-execution time, not query time, and produces new stored facts rather than a query response.
 
 ---
 
@@ -678,9 +539,10 @@ sankofa/
 │   ├── __init__.py          # Package exports
 │   ├── queries.py           # CTE SQL queries (text() strings)
 │   ├── executor.py          # execute_single_hop, execute_two_hop, etc.
-│   ├── weighing.py          # aggregate_confidence, aggregate_evidence, weigh_chain
+│   ├── weighing.py          # aggregate_confidence, aggregate_evidence, weigh_chain, weigh_derived_fact, TIER_SCORE, DECAY, MAX_DEPTH
 │   ├── contradictions.py    # detect_contradictions, CONFLICT_PAIRS
-│   └── epistemic.py         # resolve_epistemic_state, EpistemicState enum
+│   ├── epistemic.py         # resolve_epistemic_state, EpistemicState enum
+│   └── rules.py             # Layer 2/3 derivation rule functions (see §11)
 └── routers/
     └── engine.py            # FastAPI router endpoints
 ```
@@ -692,12 +554,14 @@ sankofa/
 | Phase | What | Depends on |
 |-------|------|------------|
 | 1 | Single-hop CTE queries + Python evidence-weighing | Nothing |
-| 2 | Fixed-depth recursive CTEs (2-3 hop) | Phase 1 |
+| 2 | Fixed-depth recursive CTEs (2-3 hop, forward + backward) | Phase 1 |
 | 3 | Contradiction detection logic | Phase 1 |
 | 4 | Three-state epistemic resolution | Phase 1 |
-| 5 | API router endpoints | Phases 1-4 |
+| 5 | Bidirectional neighborhood + path finding | Phase 1-2 |
+| 6 | Rule-based derivation (Layer 2/3) | Phases 1-5 |
+| 7 | API router endpoints | Phases 1-6 |
 
-**Phase 1 is the minimum viable engine.** A researcher can ask "What treats malaria?" and get a confidence-rated, evidence-counted answer with source attribution. Phases 2-5 build on that foundation.
+**Phase 1 is the minimum viable engine.** A researcher can ask "What treats malaria?" and get a confidence-rated, evidence-counted answer with source attribution.
 
 ---
 
@@ -706,65 +570,36 @@ sankofa/
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Max traversal depth | 3 hops | Prevents runaway queries on dense graph sections |
-| Confidence aggregation | `max()` across chain | One strong RCT outweighs ten weak case reports |
+| Confidence aggregation — corroboration | `max()` across independent sources | One strong RCT outweighs ten weak case reports |
+| Confidence aggregation — derivation | `min()` across premises, then `DECAY` per hop, hard-capped | A derivation chain can't be stronger than its weakest premise, and inference itself must cost confidence — prevents laundering |
 | Evidence counting | Sum across chain | Each independent source confirms = +1 |
 | Bidirectional handling | `OR` in JOIN | No duplicated edges, no separate "reverse" table |
-| Contradiction pairs | Hardcoded set | Bounded, predictable, not computed dynamically |
+| Neighborhood cycle prevention | `ARRAY` path tracking (not depth-bound alone) | Consistent with 2-hop/path queries; prevents duplicate revisits in dense graphs |
+| Contradiction pairs | Hardcoded set, same-direction + reverse-direction | Bounded, predictable; `direction` field distinguishes the two kinds |
 | SQL execution | Raw `text()` queries | Full CTE control, no ORM abstraction overhead |
-| Cycle prevention | `ARRAY` path tracking | PostgreSQL arrays for visited-node tracking |
+| Cycle prevention (traversal) | `ARRAY` path tracking | PostgreSQL arrays for visited-node tracking |
+| Rule-based derivation | Plain Python functions, not DL/Datalog | See §11 |
+
+`max()` and `min()` are answering different questions (corroboration vs. derivation) — see §4.1 for why they were previously conflated under one function and why that was a bug.
 
 ---
 
 ## 11. Rule-Based Reasoning (Layer 2/3)
 
-**Decided:** Layer 2/3 reasoning is implemented as hand-written Python
-functions performing typed graph-edge composition over
-entity_relationships — not a Description Logic reasoner (owlready2)
-or a Datalog engine (pyDatalog/ASP). Each rule is a plain function:
-pattern of existing relationship rows in, new derived relationship
-row out.
+**Decided:** Layer 2/3 reasoning is implemented as hand-written Python functions performing typed graph-edge composition over `entity_relations` — not a Description Logic reasoner (owlready2) or a Datalog engine (pyDatalog/ASP). Each rule is a plain function: pattern of existing relationship rows in, new derived relationship row out.
 
-Confidence for derived facts uses a continuous score alongside the
-existing discrete tier:
-- `TIER_SCORE = {1: 0.3, 2: 0.6, 3: 1.0}` (Traditional/Emerging/Established)
-- `combined = min(score(premise_a), score(premise_b))` — a chain is
-  only as strong as its weakest premise
-- `derived_score = combined * (DECAY ** depth)`, `DECAY = 0.75` global
-  constant, `depth = max(premise_a.depth, premise_b.depth) + 1`
-- Score maps back to a tier for storage/display (`>=0.7 → 3`,
-  `>=0.4 → 2`, else `1`), but a derived fact's tier can never exceed
-  `min(premise tiers)` regardless of score — hard cap against
-  confidence laundering across chains.
+Confidence for derived facts uses `weigh_derived_fact()` (§4.1): `TIER_SCORE`, `min()` across premises, `DECAY = 0.75` per hop, hard-capped tier stored under the `confidence` key — deliberately matching both `entity_relations.confidence` and the key premises expect, so a derived fact can feed directly into a further hop with no remapping.
 
 Cycle/runaway protection, three independent guards:
-- `MAX_DEPTH = 3` global constant — facts at max depth aren't used
-  as premises for further derivation
-- Each derived fact stores `derived_from: list[fact_id]`; before
-  insert, ancestry is walked backward to reject a new
-  `(subject, relation, object)` that already appears upstream
-- Dedup check on `(subject, relation, object)` before any insert,
-  observed or derived, as a backstop against duplicate rows
+- `MAX_DEPTH = 3` — facts at max depth aren't used as premises for further derivation
+- `derived_from: list[fact_id]` ancestry walked backward before insert, rejecting direct cycles
+- Dedup check on `(subject, relation, object)` before any insert, as a backstop
 
-**Why:** Sankofa's relationship types (causes, treats, inhibits,
-prevalent_in...) are directed weighted edges, not is-a/category
-relationships — DL's classification/subsumption machinery doesn't
-fit the data. Datalog/general rule engines solve a more general
-problem than the fixed, small set of composition patterns Sankofa
-actually needs. Owning the reasoning layer outright also avoids
-locking into a formalism that may not survive Layer 4 (Ùmà,
-indigenous-knowledge reasoning), which likely won't map cleanly onto
-classical DL categories anyway.
+**Why:** Sankofa's relationship types (causes, treats, inhibits, prevalent_in...) are directed weighted edges, not is-a/category relationships — DL's classification/subsumption machinery doesn't fit. Datalog/general rule engines solve a more general problem than the fixed, small set of composition patterns Sankofa needs. Owning the reasoning layer outright also avoids locking into a formalism that may not survive Layer 4 (Ùmà, indigenous-knowledge reasoning), which likely won't map cleanly onto classical DL categories.
 
-**Rules out:** owlready2 (Description Logic reasoner) — rejected,
-built for is-a/category hierarchies Sankofa doesn't have. Datalog/ASP
-(pyDatalog, clingo) — rejected as more general/complex than needed.
-SymPy — out of scope, that's for the mathematics domain, not relational
-inference.
+**Rules out:** owlready2 (DL reasoner, built for is-a hierarchies Sankofa doesn't have). Datalog/ASP (pyDatalog, clingo — more general/complex than needed). SymPy (mathematics domain, not relational inference).
 
-**Unblocks:** Layer 2 rule functions can be written directly against
-the existing entity_relationships schema — first rule to implement:
-`inhibits + causes → treats` (derived), tested on the malaria/anemia
-slice before generalizing to a rule-registration framework.
+**Unblocks:** first rule to implement — `inhibits + causes → treats` (derived), tested on the malaria/anemia slice before generalizing to a rule-registration framework.
 
 ---
 
@@ -774,3 +609,5 @@ slice before generalizing to a rule-registration framework.
 - **Embeddings / vector search:** Belongs to Litsi, not the engine. The engine is purely symbolic.
 - **Real-time updates:** Engine queries run on committed data. No streaming/incremental updates.
 - **Graph visualization:** Future frontend concern, not part of query engine.
+- **Reverse-direction contradiction detection:** Implemented. Split into same-direction and reverse-direction checks, with `frozenset` dedup to avoid checking the same undirected pair twice. See §4.2.
+- **Path-finding full-chain citations:** `relationship_id` in §3.4 is still scalar (last hop only); array upgrade not yet applied — see §3.4 note.

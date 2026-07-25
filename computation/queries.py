@@ -6,6 +6,7 @@ SINGLE_HOP_QUERY = text("""
         e_from.name AS from_name,
         e_to.id AS to_id,
         e_to.name AS to_name,
+        er.relationship_id AS relationship_id,
         rt.name AS relationship_type,
         er.confidence,
         er.evidence_count,
@@ -27,7 +28,8 @@ TWO_HOP_FORWARD_QUERY = text("""
             er.confidence,
             er.evidence_count,
             1 AS depth,
-            ARRAY[er.from_entity_id, er.to_entity_id] AS path
+            ARRAY[er.from_entity_id, er.to_entity_id] AS path,
+            ARRAY[er.relationship_id] AS relationship_ids
         FROM entity_relations er
         JOIN relationship_types rt ON er.relationship_id = rt.id
         JOIN entities e ON er.from_entity_id = e.id
@@ -43,7 +45,8 @@ TWO_HOP_FORWARD_QUERY = text("""
             er.confidence,
             er.evidence_count,
             t.depth + 1,
-            t.path || er.to_entity_id
+            t.path || er.to_entity_id,
+            t.relationship_ids || er.relationship_id
         FROM entity_relations er
         JOIN traversal t ON er.from_entity_id = t.to_entity_id
         JOIN relationship_types rt ON er.relationship_id = rt.id
@@ -54,6 +57,7 @@ TWO_HOP_FORWARD_QUERY = text("""
     SELECT
         e1.name AS from_name,
         e2.name AS to_name,
+        t.relationship_ids AS relationship_ids,
         rt.name AS relationship_type,
         t.confidence,
         t.evidence_count,
@@ -73,7 +77,8 @@ TWO_HOP_BACKWARD_QUERY = text("""
             er.confidence,
             er.evidence_count,
             1 AS depth,
-            ARRAY[er.from_entity_id, er.to_entity_id] AS path
+            ARRAY[er.from_entity_id, er.to_entity_id] AS path,
+            ARRAY[er.relationship_id] AS relationship_ids
         FROM entity_relations er
         JOIN relationship_types rt ON er.relationship_id = rt.id
         JOIN entities e ON er.to_entity_id = e.id
@@ -89,7 +94,8 @@ TWO_HOP_BACKWARD_QUERY = text("""
             er.confidence,
             er.evidence_count,
             t.depth + 1,
-            t.path || er.from_entity_id
+            t.path || er.from_entity_id,
+            t.relationship_ids || er.relationship_id
         FROM entity_relations er
         JOIN traversal t ON er.to_entity_id = t.from_entity_id
         JOIN relationship_types rt ON er.relationship_id = rt.id
@@ -100,6 +106,7 @@ TWO_HOP_BACKWARD_QUERY = text("""
     SELECT
         e1.name AS from_name,
         e2.name AS to_name,
+        t.relationship_ids AS relationship_ids,
         rt.name AS relationship_type,
         t.confidence,
         t.evidence_count,
@@ -122,6 +129,7 @@ NEIGHBORHOOD_QUERY = text("""
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
             END AS connected_id,
+            er.id AS relationship_id,
             rt.name AS relationship_type,
             CASE WHEN er.from_entity_id = :entity_id
                 THEN 'outgoing'
@@ -153,6 +161,7 @@ NEIGHBORHOOD_QUERY = text("""
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
             END AS connected_id,
+            er.id AS relationship_id,
             rt.name AS relationship_type,
             CASE WHEN er.from_entity_id = n.connected_id
                 THEN 'outgoing'
@@ -180,6 +189,7 @@ NEIGHBORHOOD_QUERY = text("""
     )
     SELECT
         e.name AS entity_name,
+        n.relationship_id AS relationship_id,
         n.relationship_type,
         n.direction,
         n.confidence,
@@ -217,11 +227,12 @@ PATH_QUERY = text("""
         JOIN relationship_types rt ON er.relationship_id = rt.id
         WHERE ps.depth < :max_depth
             AND er.to_entity_id != ALL(ps.visited)
-            AND ps.t_entity_id != : end_entity_id
+            AND ps.to_entity_id != :end_entity_id
     )
     SELECT
         e1.name AS from_name,
         e2.name AS to_name,
+        ps.relationship_id AS relationship_id,
         ps.relationship_path,
         ps.depth
     FROM path_search ps

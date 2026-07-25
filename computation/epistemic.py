@@ -6,7 +6,7 @@ class EpistemicState(str, Enum):
     UNCHARTED = "Uncharted"
 
 def resolve_epistemic_state(query_results: list[dict], coverage_registry: dict[str, list[str]] | None = None, disease_name: str | None = None, ) -> dict:
-    f"""Classify query results into one of three epistemic states
+    """Classify query results into one of three epistemic states
     1. Known --- relationship exists, backed by >= 1 source
     2. Knowably absent --- domain was ingested, nothing found
     3. Uncharted --- domain hasn`t been ingested yet
@@ -40,6 +40,6 @@ def resolve_epistemic_state(query_results: list[dict], coverage_registry: dict[s
     return{
         "state": EpistemicState.UNCHARTED,
         "data": [],
-        "message": f" '{disease_name}' has not been ingested yet. "
+        "message": f"'{disease_name}' has not been ingested yet. "
                    f"This is a coverage gap, not a negative finding.",
     }
