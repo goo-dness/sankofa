@@ -10,7 +10,8 @@ SINGLE_HOP_QUERY = text("""
         rt.name AS relationship_type,
         er.confidence,
         er.evidence_count,
-        er.context
+        er.context,
+        1 AS depth
     FROM entity_relations er
     JOIN entities e_from ON er.from_entity_id = e_from.id
     JOIN entities e_to ON er.to_entity_id = e_to.id
@@ -129,7 +130,7 @@ NEIGHBORHOOD_QUERY = text("""
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
             END AS connected_id,
-            er.id AS relationship_id,
+            ARRAY[er.relationship_id] AS relationship_ids,
             rt.name AS relationship_type,
             CASE WHEN er.from_entity_id = :entity_id
                 THEN 'outgoing'
@@ -161,7 +162,7 @@ NEIGHBORHOOD_QUERY = text("""
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
             END AS connected_id,
-            er.id AS relationship_id,
+            n.relationship_ids || er.relationship_id AS relationship_ids,
             rt.name AS relationship_type,
             CASE WHEN er.from_entity_id = n.connected_id
                 THEN 'outgoing'
@@ -189,7 +190,7 @@ NEIGHBORHOOD_QUERY = text("""
     )
     SELECT
         e.name AS entity_name,
-        n.relationship_id AS relationship_id,
+        n.relationship_ids AS relationship_ids,
         n.relationship_type,
         n.direction,
         n.confidence,
@@ -206,7 +207,7 @@ PATH_QUERY = text("""
         SELECT
             er.from_entity_id,
             er.to_entity_id,
-            er.relationship_id,
+            ARRAY[er.relationship_id] AS relationship_ids,
             1 AS depth,
             ARRAY[er.from_entity_id] AS visited,
             ARRAY[rt.name] AS relationship_path
@@ -218,7 +219,7 @@ PATH_QUERY = text("""
         SELECT
             er.from_entity_id,
             er.to_entity_id,
-            er.relationship_id,
+            ps.relationship_ids || er.relationship_id AS relationship_ids,
             ps.depth + 1,
             ps.visited || er.to_entity_id,
             ps.relationship_path || rt.name
@@ -232,7 +233,7 @@ PATH_QUERY = text("""
     SELECT
         e1.name AS from_name,
         e2.name AS to_name,
-        ps.relationship_id AS relationship_id,
+        ps.relationship_ids AS relationship_ids,
         ps.relationship_path,
         ps.depth
     FROM path_search ps

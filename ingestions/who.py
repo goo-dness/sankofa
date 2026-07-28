@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import requests
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.http_utils import get_with_retry
@@ -132,6 +133,7 @@ def transform_to_entities(
             sources.append(
                 {
                     "entity_name": disease_name,
+                    "domain": "epidemiology",
                     "source_name": "WHO GHO",
                     "source_url": source_url,
                 }
@@ -156,6 +158,7 @@ def transform_to_entities(
         sources.append(
             {
                 "entity_name": statistic_entity_name,
+                "domain": "epidemiology",
                 "source_name": "WHO GHO",
                 "source_url": source_url,
             }
@@ -176,6 +179,7 @@ def transform_to_entities(
             sources.append(
                 {
                     "entity_name": spatial_dim,
+                    "domain": "geography",
                     "source_name": "WHO GHO",
                     "source_url": source_url,
                 }
@@ -185,7 +189,9 @@ def transform_to_entities(
         relationships.append(
             {
                 "from_entity_name": statistic_entity_name,
+                "from_entity_domain": "epidemiology",
                 "to_entity_name": disease_name,
+                "to_entity_domain": "epidemiology",
                 "relationship_name": "measures",
                 "confidence": 3,
                 "context": f"Year: {time_dim},Source: WHO GHO",
@@ -196,7 +202,9 @@ def transform_to_entities(
         relationships.append(
             {
                 "from_entity_name": statistic_entity_name,
+                "from_entity_domain": "epidemiology",
                 "to_entity_name": spatial_dim,
+                "to_entity_domain": "geography",
                 "relationship_name": "prevalent_in",
                 "confidence": 3,
                 "context": f"Year: {time_dim}, Source: WHO GHO",
@@ -233,31 +241,37 @@ def load_to_database(
         # --- Upsert entities ---
         for entity_dict in entities:
             entity_name = entity_dict["name"]
+            domain = entity_dict.get("domain")
+            normalized_name = entity_name.lower().strip()
 
             existing_entity = (
-                db.query(Entity).filter(Entity.name == entity_name).first()
+                db.query(Entity)
+                .filter(func.lower(func.trim(Entity.name)) == normalized_name)
+                .filter_by(domain=domain)
+                .first()
             )
 
             if existing_entity:
                 if entity_dict["confidence"] > existing_entity.confidence:
                     existing_entity.confidence = entity_dict["confidence"]
-                    print(f"Upgraded confidence for entity: {entity_name}")
-                entity_name_to_id[entity_name] = existing_entity.id
+                    print(f"Upgraded confidence for entity: {entity_name} ({domain})")
+                entity_name_to_id[(entity_name, domain)] = existing_entity.id
             else:
                 new_entity = Entity(**entity_dict, evidence_count=1)
                 db.add(new_entity)
                 db.flush()
-                entity_name_to_id[new_entity.name] = new_entity.id
-                print(f"Added new entity: {entity_name}")
+                entity_name_to_id[(new_entity.name, domain)] = new_entity.id
+                print(f"Added new entity: {entity_name} ({domain})")
 
         # --- Upsert sources, strengthening evidence_count on genuinely new evidence ---
         for source_dict in sources:
             entity_name = source_dict["entity_name"]
-            entity_id = entity_name_to_id.get(entity_name)
+            domain = source_dict["domain"]
+            entity_id = entity_name_to_id.get((entity_name, domain))
 
             if not entity_id:
                 print(
-                    f"Warning: Entity ID not found for source entity {entity_name}, skipping source"
+                    f"Warning: Entity ID not found for source entity {entity_name} ({domain}), skipping source"
                 )
                 continue
 
@@ -290,11 +304,13 @@ def load_to_database(
         # --- Upsert relationships ---
         for relationship_dict in relationships:
             from_entity_name = relationship_dict["from_entity_name"]
+            from_entity_domain = relationship_dict["from_entity_domain"]
             to_entity_name = relationship_dict["to_entity_name"]
+            to_entity_domain = relationship_dict["to_entity_domain"]
             relationship_name = relationship_dict["relationship_name"]
 
-            from_entity_id = entity_name_to_id.get(from_entity_name)
-            to_entity_id = entity_name_to_id.get(to_entity_name)
+            from_entity_id = entity_name_to_id.get((from_entity_name, from_entity_domain))
+            to_entity_id = entity_name_to_id.get((to_entity_name, to_entity_domain))
             relationship_type_id = relationship_type_name_to_id.get(relationship_name)
 
             if (
@@ -331,13 +347,7 @@ def load_to_database(
                 if not existing_rel_source:
                     existing_relationship.evidence_count += 1  # type: ignore[assignment]
 
-                    if (
-                        relationship_dict["confidence"]
-                        > existing_relationship.confidence
-                    ):
-                        existing_relationship.confidence = relationship_dict[
-                            "confidence"
-                        ]
+                    existing_relationship.confidence = max(existing_relationship.confidence, relationship_dict["confidence"])
 
                     new_rel_source = RelationshipSource(
                         relationship_id=existing_relationship.id,

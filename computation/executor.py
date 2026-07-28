@@ -13,7 +13,7 @@ from computation.epistemic import resolve_epistemic_state
 
 CITATIONS_QUERY = text("""
     SELECT
-        rs.relationshid_id,
+        rs.relationship_id,
         rs.source_name,
         rs.source_url,
         rs.source_author,

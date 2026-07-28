@@ -2,8 +2,9 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
-
+from app.config import settings
 import requests
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -24,7 +25,7 @@ PUBMED_EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETMAX = 50
 PUBMED_CAP = 500
 EFETCH_BATCH_SIZE = 200
-MAILTO = "goodnessakuba1708@gmail.com"
+MAILTO = settings.PUBMED_EMAIL
 
 AFRICAN_COUNTRY_NAMES = [
     "Algeria",
@@ -429,6 +430,7 @@ def transform(raw_records, disease_name):
             # Build entity_source record for the disease entity
             disease_entity_source_record = {
                 "entity_name": disease_name,
+                "domain": "healthcare",
                 "source_name": "PubMed",
                 "source_url": paper_source_url,
                 "confidence": confidence_tier_for_this_paper,
@@ -458,6 +460,7 @@ def transform(raw_records, disease_name):
             # Build entity_source record for the region entity
             region_entity_source_record = {
                 "entity_name": region_name,
+                "domain": "geography",
                 "source_name": "PubMed",
                 "source_url": paper_source_url,
                 "confidence": confidence_tier_for_this_paper,
@@ -470,7 +473,9 @@ def transform(raw_records, disease_name):
             # Build prevalent_in relationship
             prevalent_relationship_dict = {
                 "from_entity_name": disease_name,
+                "from_entity_domain": "healthcare",
                 "to_entity_name": region_name,
+                "to_entity_domain": "geography",
                 "relationship": "prevalent_in",
                 "confidence": confidence_tier_for_this_paper,
                 "context": ArticleTitle_TEXT,
@@ -507,6 +512,7 @@ def transform(raw_records, disease_name):
                     # Build entity_source record for the treatment entity
                     treatment_entity_source_record = {
                         "entity_name": found_treatment_name,
+                        "domain": "healthcare",
                         "source_name": "PubMed",
                         "source_url": paper_source_url,
                         "confidence": confidence_tier_for_this_paper,
@@ -518,7 +524,9 @@ def transform(raw_records, disease_name):
 
                     treats_relationship_dict = {
                         "from_entity_name": found_treatment_name,
+                        "from_entity_domain": "healthcare",
                         "to_entity_name": disease_name,
+                        "to_entity_domain": "healthcare",
                         "relationship": "treats",
                         "confidence": confidence_tier_for_this_paper,
                         "context": ArticleTitle_TEXT,
@@ -530,7 +538,7 @@ def transform(raw_records, disease_name):
                     relationships.append(treats_relationship_dict)
         except Exception as error:
             print(
-                f"Warning; Skipping malformed PubMed record(PMID: {current_pmid} for {disease_name} during transform: {error}"
+                f"Warning: Skipping malformed PubMed record (PMID: {current_pmid} for {disease_name} during transform: {error}"
             )
             continue
     return entities, relationships, sources
@@ -562,24 +570,28 @@ def load(entities, relationships, sources, db_session):
         # Step 2: Upsert Entities and get their IDs
         for entity_dict in entities:
             entity_name = entity_dict["name"]
+            domain = entity_dict["domain"]
+            normalized_incoming = entity_name.lower().strip()
 
             existing_entity = (
-                db_session.query(Entity).filter(Entity.name == entity_name).first()
+                db_session.query(Entity)
+                .filter(func.lower(func.trim(Entity.name)) == normalized_incoming)
+                .filter_by(domain=domain)
+                .first()
             )
 
             if existing_entity is not None:
                 # Update confidence if strictly higher
                 if entity_dict["confidence"] > existing_entity.confidence:
                     existing_entity.confidence = entity_dict["confidence"]
-                entity_name_to_id[entity_name] = existing_entity.id
+                entity_name_to_id[(entity_name, domain)] = existing_entity.id
                 db_session.add(existing_entity)
             else:
                 new_entity = Entity(**entity_dict, evidence_count=1)
                 db_session.add(new_entity)
                 db_session.flush()
-                entity_name_to_id[entity_name] = new_entity.id
+                entity_name_to_id[(entity_name, domain)] = new_entity.id
                 print(f"Added new entity: {entity_name}")
-        db_session.commit()
 
         # Step 3: Process Sources (EntitySources and RelationshipSources)
         for source_entry_dict in sources:
@@ -590,11 +602,12 @@ def load(entities, relationships, sources, db_session):
             # Determine if this is an EntitySource or RelationshipSource entry
             if "entity_name" in source_entry_dict:  # This is an EntitySource entry
                 entity_name = source_entry_dict["entity_name"]
-                entity_id = entity_name_to_id.get(entity_name)
+                domain = source_entry_dict["domain"]
+                entity_id = entity_name_to_id.get((entity_name, domain))
 
                 if entity_id is None:
                     print(
-                        f"Warning: Could not find ID for entity '{entity_name}' for source link '{source_url}' skipping entity source"
+                        f"Warning: Could not find ID for entity '{entity_name}' ({domain}) for source link '{source_url}' skipping entity source"
                     )
                     continue
 
@@ -627,20 +640,21 @@ def load(entities, relationships, sources, db_session):
                             f"CRITICAL ERROR: Entity with ID {entity_id} not found immediately after upserting. Skipping evidence_count update for source {source_url}."
                         )
                         continue
-        db_session.commit()
 
         # Step 4: Upsert Relationships and create their sources
         for relationship_dict in relationships:
             from_entity_name = relationship_dict["from_entity_name"]
+            from_entity_domain = relationship_dict["from_entity_domain"]
             to_entity_name = relationship_dict["to_entity_name"]
+            to_entity_domain = relationship_dict["to_entity_domain"]
             relationship_type_name = relationship_dict["relationship"]
             relationship_confidence_from_paper = relationship_dict["confidence"]
             relationship_context_from_paper = relationship_dict["context"]
             relationship_source_url = relationship_dict["source_url"]
             relationship_source_name = relationship_dict["source_name"]
 
-            from_id = entity_name_to_id.get(from_entity_name)
-            to_id = entity_name_to_id.get(to_entity_name)
+            from_id = entity_name_to_id.get((from_entity_name, from_entity_domain))
+            to_id = entity_name_to_id.get((to_entity_name, to_entity_domain))
             relationship_type_id = relationship_type_name_to_id.get(
                 relationship_type_name
             )

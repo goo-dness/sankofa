@@ -1,8 +1,9 @@
 import time
 from typing import Any, Dict, List, Tuple
 
-import httpx
+from app.config import settings
 import requests
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -12,7 +13,6 @@ from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
-
 # CONSTANTS
 OPENALEX_URL = "https://api.openalex.org/works"
 PER_PAGE = 50
@@ -333,7 +333,7 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
         "filter": filter_string,
         "per_page": PER_PAGE,
         "cursor": "*",  # Tells Openalex to start from beginning
-        "api_key": "LavCfEBQRCydbMVkEPaZzR",
+        "api_key": settings.OPENALEX_API_KEY,
     }
 
     raw_records: List[Dict[str, Any]] = []
@@ -422,10 +422,22 @@ def transform(
                 }
                 entities.append(region_entity_dict)
                 added_regions.add(region)
+
+                sources.append(
+                    {
+                        "entity_name": region,
+                        "domain": "geography",
+                        "source_name": "OpenAlex",
+                        "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+                        "source_author": first_author,
+                        "source_title": paper.get("title", ""),
+                    }
+                )
             # Build source records
             # Papers are sources in Sankofa not entities
             source_dict = {
                 "entity_name": disease_name,
+                "domain": "healthcare",
                 "source_name": "OpenAlex",
                 "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
                 "source_author": first_author,
@@ -437,7 +449,9 @@ def transform(
             # Build prevalent_in relationship
             prevalent_relationships_dict = {
                 "from_entity_name": disease_name,
+                "from_entity_domain": "healthcare",
                 "to_entity_name": region,
+                "to_entity_domain": "geography",
                 "relationship": "prevalent_in",
                 "confidence": confidence,
                 "context": paper.get("title"),
@@ -469,9 +483,24 @@ def transform(
                 }
                 entities.append(treatment_entity_dict)
 
+                sources.append(
+                    {
+                        "entity_name": actual_treatment,
+                        "domain": "healthcare",
+                        "source_name": "OpenAlex",
+                        "source_url": paper.get("doi")
+                        if paper.get("doi")
+                        else paper.get("id"),
+                        "source_author": first_author,
+                        "source_title": paper.get("title", ""),
+                    }
+                )
+
                 treats_relationship_dict = {
                     "from_entity_name": actual_treatment,
+                    "from_entity_domain": "healthcare",
                     "to_entity_name": disease_name,
+                    "to_entity_domain": "healthcare",
                     "relationship": "treats",
                     "confidence": confidence,
                     "context": paper.get("title"),
@@ -515,10 +544,12 @@ def load(entities, relationships, sources, db_session):
         for entity_dict in entities:
             entity_name = entity_dict["name"]
             domain = entity_dict["domain"]
+            normalized_incoming = entity_name.lower().strip()
 
             existing_entity = (
                 db_session.query(Entity)
-                .filter_by(name=entity_name, domain=domain)
+                .filter(func.lower(func.trim(Entity.name)) == normalized_incoming)
+                .filter_by(domain=domain)
                 .first()
             )
             # Check for duplicate, and compare
@@ -526,7 +557,7 @@ def load(entities, relationships, sources, db_session):
                 if entity_dict["confidence"] > existing_entity.confidence:
                     existing_entity.confidence = entity_dict["confidence"]
                     print(f"Upgrade confidence for entity: {entity_name}")
-                entity_name_to_id[entity_name] = existing_entity.id
+                entity_name_to_id[(entity_name, domain)] = existing_entity.id
 
             else:
                 # Create a new entity
@@ -534,17 +565,18 @@ def load(entities, relationships, sources, db_session):
                 # Add the new entity to database
                 db_session.add(new_entity)
                 db_session.flush()  # get the new id before moving on
-                entity_name_to_id[entity_name] = new_entity.id
+                entity_name_to_id[(entity_name, domain)] = new_entity.id
                 print(f"Added new entity: {entity_name}")
 
         # ---Stage 3: Upsert sources ---
         for source_dict in sources:
             entity_name = source_dict["entity_name"]
-            entity_id = entity_name_to_id.get(entity_name)
+            domain = source_dict["domain"]
+            entity_id = entity_name_to_id.get((entity_name, domain))
 
             if not entity_id:
                 print(
-                    f"Warnig: Entity ID not found for source entity {entity_name}, skipping source."
+                    f"Warning: Entity ID not found for source entity {entity_name} ({domain}), skipping source."
                 )
                 continue
 
@@ -578,11 +610,13 @@ def load(entities, relationships, sources, db_session):
         # ---Stae 4: Upsert Relationships---
         for relationship_dict in relationships:
             from_entity_name = relationship_dict["from_entity_name"]
+            from_entity_domain = relationship_dict["from_entity_domain"]
             to_entity_name = relationship_dict["to_entity_name"]
+            to_entity_domain = relationship_dict["to_entity_domain"]
             relationship_name = relationship_dict["relationship"]
 
-            from_id = entity_name_to_id.get(from_entity_name)
-            to_id = entity_name_to_id.get(to_entity_name)
+            from_id = entity_name_to_id.get((from_entity_name, from_entity_domain))
+            to_id = entity_name_to_id.get((to_entity_name, to_entity_domain))
             relationship_type_id = relationship_type_name_to_id.get(relationship_name)
 
             if not from_id or not to_id or not relationship_type_id:

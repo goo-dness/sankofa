@@ -16,7 +16,7 @@ def detect_contradictions(results: list[dict]) -> list[dict]:
     including conflicts across reversed direction (A->B vs B->A)."""
     entity_pairs = defaultdict(list)
     for r in results:
-        key = (r["from_entity_id"], r["to_entity_id"])
+        key = (r["from_id"], r["to_id"])
         entity_pairs[key].append(r)
 
     contradictions = []
