@@ -116,99 +116,99 @@ def extract(disease_name):
 
             time.sleep(0.1)
 
-        # Identify all unique molecule_chembl_ids from drug_indications
-        # FIX 1: parent molecules never get their pref_name fetched (extract())
-        # Ensure parent_molecule_chembl_id values are also included for fetching pref_name
-        unique_molecule_chembl_ids = set()
-        for record in raw_drug_indications_data:
-            unique_molecule_chembl_ids.add(record.get('molecule_chembl_id'))
-            parent_id = record.get('parent_molecule_chembl_id')
-            if parent_id is not None:
-                unique_molecule_chembl_ids.add(parent_id)
+    # Identify all unique molecule_chembl_ids from drug_indications
+    # FIX 1: parent molecules never get their pref_name fetched (extract())
+    # Ensure parent_molecule_chembl_id values are also included for fetching pref_name
+    unique_molecule_chembl_ids = set()
+    for record in raw_drug_indications_data:
+        unique_molecule_chembl_ids.add(record.get('molecule_chembl_id'))
+        parent_id = record.get('parent_molecule_chembl_id')
+        if parent_id is not None:
+            unique_molecule_chembl_ids.add(parent_id)
 
-        # Identify all target_chembl_id from mechanism
-        unique_target_chembl_id = set()
+    # Identify all target_chembl_id from mechanism
+    unique_target_chembl_id = set()
 
-        # For each unique molecule_chembl_id, query /molecule and /mechanism
-        for molecule_chembl_id in unique_molecule_chembl_ids:
-            if molecule_chembl_id is None:
-                continue
+    # For each unique molecule_chembl_id, query /molecule and /mechanism
+    for molecule_chembl_id in unique_molecule_chembl_ids:
+        if molecule_chembl_id is None:
+            continue
 
-            # Query /molecule/<id> for pref_name
-            molecule_url = f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json"
-            print(f"Fetching molecule details for {molecule_chembl_id}")
-            try:
-                response = get_with_retry(molecule_url, params=None, timeout=30.0, context_label=f"ChEMBL molecule details for {molecule_chembl_id}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error making API request for {molecule_chembl_id}: {e}")
-                response = None
+        # Query /molecule/<id> for pref_name
+        molecule_url = f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json"
+        print(f"Fetching molecule details for {molecule_chembl_id}")
+        try:
+            response = get_with_retry(molecule_url, params=None, timeout=30.0, context_label=f"ChEMBL molecule details for {molecule_chembl_id}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error making API request for {molecule_chembl_id}: {e}")
+            response = None
 
-            if response is None:
-                print(f"API failed after retries for molecule {molecule_chembl_id}")
+        if response is None:
+            print(f"API failed after retries for molecule {molecule_chembl_id}")
+        else:
+            JSON_DATA = response.json()
+            if response.status_code == 200 and JSON_DATA.get('molecule_chembl_id') is not None:
+                raw_molecules_data.append(JSON_DATA)
             else:
+                print(f"Error or no molecule details found for {molecule_chembl_id}")
+
+
+        # Query /mechanism?molecule_chembl_id=<id>, capped at N per molecule
+        mechanism_url =f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={molecule_chembl_id}"
+        print(f"Fetching mechanisms for {molecule_chembl_id}")
+        full_mechanism_url = f"{mechanism_url}&limit={MECHANISM_CAP_PER_MOLECULE}"
+        try:
+            response = get_with_retry(full_mechanism_url, params=None, timeout=30.0, context_label=f"ChEMBL mechanism for molecule {molecule_chembl_id}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error making API request for mechanism {molecule_chembl_id}: {e}")
+            response = None
+
+        if response is None:
+            print(f"API failed after retries for mechanism {molecule_chembl_id}")
+        else:
+            try:
                 JSON_DATA = response.json()
-                if response.status_code == 200 and JSON_DATA.get('molecule_chembl_id') is not None:
-                    raw_molecules_data.append(JSON_DATA)
-                else:
-                    print(f"Error or no molecule details found for {molecule_chembl_id}")
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON for mecahnism {molecule_chembl_id}: {e}. Response: {response.text[:200]}...")
+                JSON_DATA = {}
 
-
-            # Query /mechanism?molecule_chembl_id=<id>, capped at N per molecule
-            mechanism_url =f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={molecule_chembl_id}"
-            print(f"Fetching mechanisms for {molecule_chembl_id}")
-            full_mechanism_url = f"{mechanism_url}&limit={MECHANISM_CAP_PER_MOLECULE}"
-            try:
-                response = get_with_retry(full_mechanism_url, params=None, timeout=30.0, context_label=f"ChEMBL mechanism for molecule {molecule_chembl_id}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error making API request for mechanism {molecule_chembl_id}: {e}")
-                response = None
-
-            if response is None:
-                print(f"API failed after retries for mechanism {molecule_chembl_id}")
+            mechanisms = JSON_DATA.get('mechanisms')
+            if response.status_code == 200 and mechanisms is not None:
+                for mechanism_record in mechanisms:
+                    raw_mechanisms_data.append(mechanism_record)
+                    unique_target_chembl_id.add(mechanism_record.get('target_chembl_id'))
             else:
-                try:
-                    JSON_DATA = response.json()
-                except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON for mecahnism {molecule_chembl_id}: {e}. Response: {response.text[:200]}...")
-                    JSON_DATA = {}
+                print(f"Error or no mechanisms found for {molecule_chembl_id}")
 
-                mechanisms = JSON_DATA.get('mechanisms')
-                if response.status_code == 200 and mechanisms is not None:
-                    for mechanism_record in mechanisms:
-                        raw_mechanisms_data.append(mechanism_record)
-                        unique_target_chembl_id.add(mechanism_record.get('target_chembl_id'))
-                else:
-                    print(f"Error or no mechanisms found for {molecule_chembl_id}")
+        time.sleep(0.1)
 
-            time.sleep(0.1)
+    # Query /target/<target_chembl_id> for pref_name (target display name)
+    for target_chembl_id in unique_target_chembl_id:
+        if target_chembl_id is None:
+            continue
 
-        # Query /target/<target_chembl_id> for pref_name (target display name)
-        for target_chembl_id in unique_target_chembl_id:
-            if target_chembl_id is None:
-                continue
+        target_url = f"{CHEMBL_BASE_URL}target/{target_chembl_id}.json"
+        print(f"Fetching target details for {target_chembl_id}")
+        try:
+            response = get_with_retry(target_url, params=None, timeout=30.0, context_label=f"ChEMBL target for molecule {target_chembl_id}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error making API request for target {target_chembl_id}: {e}")
+            response = None
 
-            target_url = f"{CHEMBL_BASE_URL}target/{target_chembl_id}.json"
-            print(f"Fetching target details for {target_chembl_id}")
+        if response is None:
+            print(f"API failed after retries for target {target_chembl_id}")
+        else:
             try:
-                response = get_with_retry(target_url, params=None, timeout=30.0, context_label=f"ChEMBL target for molecule {target_chembl_id}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error making API request for target {target_chembl_id}: {e}")
-                response = None
-
-            if response is None:
-                print(f"API failed after retries for target {target_chembl_id}")
+                JSON_DATA = response.json()
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON for target {target_chembl_id}: {e}. Response: {response.text[:200]}...")
+                JSON_DATA = {}
+            if response.status_code == 200 and JSON_DATA.get('target_chembl_id') is not None:
+                raw_targets_data.append(JSON_DATA)
             else:
-                try:
-                    JSON_DATA = response.json()
-                except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON for target {target_chembl_id}: {e}. Response: {response.text[:200]}...")
-                    JSON_DATA = {}
-                if response.status_code == 200 and JSON_DATA.get('target_chembl_id') is not None:
-                    raw_targets_data.append(JSON_DATA)
-                else:
-                    print(f"Error or no target details found for {target_chembl_id}")
+                print(f"Error or no target details found for {target_chembl_id}")
 
-            time.sleep(0.1)
+        time.sleep(0.1)
 
     return{
         "indications": raw_drug_indications_data,
@@ -283,9 +283,13 @@ def transform(raw_data, disease_name):
             if molecule_chembl_id is None:
                 continue
 
-            max_phase_float = float(indication_record.get("max_phase_for_ind"))
+            max_phase_raw = indication_record.get("max_phase_for_ind")
+            if max_phase_raw is None:
+                max_phase_float = -1.0
+            else:
+                max_phase_float = float(max_phase_raw)
             parent_molecule_chembl_id = indication_record.get("parent_molecule_chembl_id")
-            current_indication_refs = indication_record.get("current_indication_refs", [])
+            current_indication_refs = indication_record.get("indication_refs", [])
 
             dedupe_key = (molecule_chembl_id, disease_name)
             if dedupe_key not in deduped_indications_map:
@@ -342,6 +346,10 @@ def transform(raw_data, disease_name):
                 # One relationship_dict per source ref - matches the established
                 # one-dict-per-source-instance pattern from openalex.py/pubmed.py
                 for ref in refs:
+                    ref_url = ref.get("ref_url")
+                    if ref_url is None:
+                        ref_url = f"{CHEMBL_BASE_URL}drug_indication.json?ref_id={ref.get('ref_id')}"
+
                     relationships.append({
                         "from_entity_name": molecule_display_name,
                         "from_entity_domain": DISEASE_DOMAIN,
@@ -353,7 +361,7 @@ def transform(raw_data, disease_name):
                         "confidence": treats_confidence,
                         "context": f"ChEMBL max_phase_for_ind: {max_phase_value}",
                         "source_name": ref.get("ref_type", "ChEMBL"),
-                        "source_url": ref.get("ref_url"),
+                        "source_url": ref_url,
                     })
             else:
                 # No refs available - fall back to a ChEMBL-page source so the

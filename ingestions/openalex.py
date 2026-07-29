@@ -388,7 +388,7 @@ def transform(
     for paper in raw_records:
         try:
             # Derive all fields we need
-            abstract_text = reconstruct_abstract(paper.get("inverted_index", {}))
+            abstract_text = reconstruct_abstract(paper.get("abstract_inverted_index", {}))
             confidence = determine_confidence(paper.get("cited_by_count", 0))
 
             entity_type = determine_entity_type(abstract_text)
@@ -423,16 +423,16 @@ def transform(
                 entities.append(region_entity_dict)
                 added_regions.add(region)
 
-                sources.append(
-                    {
-                        "entity_name": region,
-                        "domain": "geography",
-                        "source_name": "OpenAlex",
-                        "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
-                        "source_author": first_author,
-                        "source_title": paper.get("title", ""),
-                    }
-                )
+            sources.append(
+                {
+                    "entity_name": region,
+                    "domain": "geography",
+                    "source_name": "OpenAlex",
+                    "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+                    "source_author": first_author,
+                    "source_title": paper.get("title", ""),
+                }
+            )
             # Build source records
             # Papers are sources in Sankofa not entities
             source_dict = {

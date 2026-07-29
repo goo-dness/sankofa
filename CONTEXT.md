@@ -256,6 +256,47 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-07-29 — ChEMBL and OpenAlex ingestion bugs fixed (mesh_id loop scope, null max_phase, wrong field names, region evidence gating)
+
+**Decided:** Four bugs fixed across chembl.py and openalex.py, found via
+line-by-line review checked against real API responses/docs, not assumed
+field names.
+- chembl.py: molecule/mechanism/target fetch block was indented inside
+  the `for mesh_id in mesh_ids:` loop, causing redundant refetching for
+  multi-mesh-id diseases (tuberculosis, dengue, leishmaniasis). Dedented
+  to run once per disease.
+- chembl.py: `float(max_phase_for_ind)` crashed on null and silently
+  dropped the whole indication record. Now defaults to -1.0 (unknown
+  tier), matching the existing confidence-tier comment's intent.
+- chembl.py: code read `current_indication_refs`; real ChEMBL field
+  (confirmed via curl) is `indication_refs`. Every "treats" relationship
+  had been falling back to a generic molecule-page source instead of
+  real ClinicalTrials/FDA refs. Fixed, plus a `ref_id`-based fallback
+  URL for refs missing `ref_url`.
+- openalex.py: code read `paper.get("inverted_index")`; real OpenAlex
+  field (confirmed against OpenAlex docs) is `abstract_inverted_index`.
+  abstract_text was always empty — entity_type classification always
+  fell through to "Epidemiological" and no treatment/`treats`
+  relationships were ever created from OpenAlex data. Fixed.
+- openalex.py: region entity's `EntitySource` was only appended the
+  first time a region was seen per run — undercounting evidence_count.
+  Dedented so every paper contributes a source, matching the
+  disease/treatment entity pattern.
+
+**Why:** All four caught by verifying real API output/docs instead of
+trusting assumed field names — same principle that caught the earlier
+"Niger"/"Nigeria" and continent-field bugs.
+
+**Rules out:** Nothing architectural — bug fixes within the existing
+extract/transform/load pattern, no design changes.
+
+**Unblocks:** ChEMBL and OpenAlex can be re-run with meaningfully
+different, correct output. Worth auditing existing OpenAlex-sourced
+entities first: `SELECT entity_type, COUNT(*) FROM entities WHERE
+contributor = 'OpenAlex' GROUP BY entity_type` — likely skewed 100%
+Epidemiological pre-fix.
+
+
 ### 2026-07-21 — Inference layer: plain Python rule functions, not DL/Datalog
 
 **Decided:** Layer 2/3 reasoning is implemented as hand-written Python
