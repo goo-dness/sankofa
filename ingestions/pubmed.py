@@ -714,13 +714,7 @@ def load(entities, relationships, sources, db_session):
                     )
                     if relationship_to_update is not None:
                         relationship_to_update.evidence_count += 1
-                        if (
-                            relationship_confidence_from_paper
-                            > relationship_to_update.confidence
-                        ):
-                            relationship_to_update.confidence = (
-                                relationship_confidence_from_paper
-                            )
+                        relationship_to_update.confidence = max(relationship_confidence_from_paper, relationship_to_update.confidence)
                         db_session.add(relationship_to_update)
                     else:
                         print(
