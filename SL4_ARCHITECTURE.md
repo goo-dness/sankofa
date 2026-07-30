@@ -145,6 +145,11 @@ JOIN relationship_types rt ON t.relationship_id = rt.id;
 **Cycle prevention:** The `path` array tracks visited node IDs. Each new hop checks `er.to_entity_id != ALL(t.path)` to prevent infinite loops on cyclic graphs.
 
 **Provenance (2026-07-25 fix):** `relationship_id` was previously carried as a scalar that got silently overwritten at each recursive step — a 2-hop answer only retained the *second* edge's ID, dropping the first hop's citation entirely. Fixed by accumulating `relationship_ids` as an array the same way `path` accumulates node IDs. The Python citations resolver must now join `relationship_sources` against every ID in the array, not a single value. This applies to every multi-hop query below.
+**Contradiction detection (2026-07-29 fix):** `from_entity_id`/`to_entity_id`
+were missing from the final SELECT, so `detect_contradictions()` had no
+entity-pair key to group on and would `KeyError` on any non-empty result
+set. Added both columns from the CTE (already tracked internally, just
+never surfaced). Applies to 3.2b below as well.
 
 ### 3.2b Fixed-Depth Recursive CTE (2-hop, backward)
 
@@ -215,6 +220,7 @@ ORDER BY n.depth, e.name;
 ```
 
 **Design decision (2026-07-25, supersedes earlier draft):** this query uses explicit `path`-array cycle prevention, the same pattern as 3.2 and 3.4 — not depth-bounding alone. An earlier draft relied only on `n.depth < :max_depth` with no path tracking; that's sufficient to guarantee termination but allows the same node to be revisited at a deeper level via a different route, producing duplicate/misleading entries in dense or cyclic graph regions. Path tracking is now standard across all three recursive traversal queries for consistency and to keep neighborhood results deduplicated per node.
+**Correction (2026-07-29):** this section previously showed a scalar `relationship_id`, inconsistent with §3.2's array-accumulation fix, which applies here too since neighborhood is multi-hop past depth 1. Corrected to `ARRAY[er.id] AS relationship_ids`, accumulated the same way as `path`. Also added `connected_id AS connected_entity_id` to the final SELECT, needed so Python can reconstruct `from_entity_id`/`to_entity_id` pairs (using the query's own `direction` field as the anchor) for `detect_contradictions()`.
 
 ### 3.4 Path Finding (shortest path between two entities)
 
@@ -503,7 +509,10 @@ Calls `aggregate_confidence`/`aggregate_evidence` directly — this is query-tim
 
 Bridges CTE SQL execution and Python logic. Uses raw SQL via SQLAlchemy's `execute()` (not ORM queries) for full CTE control.
 
-Executors now pass `relationship_ids` (plural, array) through to the citations resolver for `execute_two_hop`, matching the §3.2 fix. `execute_single_hop` and `execute_neighborhood` already returned a single `relationship_id` correctly, since those are genuinely single-edge results. Executors call `aggregate_confidence`/`aggregate_evidence` (or `weigh_chain`, which bundles both) for aggregating result sets, per §4.1 — never `weigh_derived_fact`, which is reserved for rule-time derivation, not query-time responses.
+Executors now pass `relationship_ids` (plural, array) through to the citations resolver for `execute_two_hop` and `execute_neighborhood`, matching the §3.2/§3.3 fixes — neighborhood is multi-hop past depth 1, so it needed the same array treatment, not the scalar handling this section previously (incorrectly) described. `execute_single_hop` is the only executor that genuinely returns a single-edge result and correctly uses a scalar `relationship_id`.
+
+`execute_path_query` deliberately returns `citations: {}`, `contradictions: []`, `chain_weight: None` (2026-07-29) — `PATH_QUERY` collapses to one best path via `LIMIT 1`, not competing edges per entity pair, so contradiction detection isn't meaningful without restructuring into per-hop rows. Deferred, same status as the existing §3.4/§12 scalar-relationship_id gap.
+. Executors call `aggregate_confidence`/`aggregate_evidence` (or `weigh_chain`, which bundles both) for aggregating result sets, per §4.1 — never `weigh_derived_fact`, which is reserved for rule-time derivation, not query-time responses.
 
 ---
 

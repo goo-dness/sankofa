@@ -256,6 +256,58 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-07-29/30 — Ingestion coverage: extraction_succeeded signal threaded through all four pipelines + seed.py
+
+**Decided:** Extended the existing but silently-broken coverage
+tracking (seed.py's record_coverage()/IngestionCoverage — this
+already existed, wasn't discovered until seed.py was reviewed
+mid-session). Problem: seed.py was calling record_coverage()
+unconditionally after every ingestion run, regardless of whether the
+underlying API call actually succeeded — a transient API failure
+would get permanently recorded as "checked, nothing found"
+(KNOWABLY_ABSENT), indistinguishable from a genuine empty result.
+
+Fix: each pipeline's extract() now returns a
+(data, extraction_succeeded) tuple (chembl.py returns it as a
+"success" dict key instead, since it already returns a dict). Every
+existing silent failure branch (response is None, non-200 status,
+JSON/XML decode errors, request exceptions) now sets
+extraction_succeeded = False instead of just printing and continuing.
+Each run_*_ingestion() orchestrator returns that boolean up to
+seed.py, which now only calls record_coverage() when the run
+genuinely succeeded — printing a distinguishing message either way so
+failures are visible in logs, not just swallowed.
+
+**Status — CONFIRMED via pasted-back file review:**
+- seed.py — fixed and verified (including a real indentation bug
+  introduced mid-fix, caught and corrected)
+
+**Status — fix given, NOT YET verified via paste-back (do this first
+in the next session):**
+- pubmed.py — extract() and run_pubmed_ingestion()
+- who.py — extract_who_data()
+- openalex.py — extract_openalex_data() and run_openalex_ingestion()
+  (this is IN ADDITION TO the abstract_inverted_index/region-evidence
+  fixes from earlier, which ARE confirmed)
+- chembl.py — extract() and run_chembl_ingestion() (IN ADDITION TO
+  the mesh_id/max_phase/field-name/ref-url fixes from earlier, which
+  ARE confirmed)
+
+**Open, locked decision not yet implemented:** Coverage granularity
+decided as Option B — per (disease, source, relationship_type), not
+just per (disease, source). record_coverage()'s current signature
+(db, domain, disease_name, source_name) has no relationship_type
+parameter, and each pipeline's load() doesn't yet declare which
+relationship types it's capable of producing on a given run. Needs
+models/coverage.py (not yet seen) before this can be scoped further —
+next session should start by requesting that file.
+
+**Why:** A researcher asking Sankofa "does X treat Y" deserves to
+know the difference between "we checked, no relationship exists" and
+"we don't actually know, our last check failed" — silently
+mislabeling the second as the first is worse than having no coverage
+tracking, since it looks authoritative while being wrong.
+
 ### 2026-07-29 — ChEMBL and OpenAlex ingestion bugs fixed (mesh_id loop scope, null max_phase, wrong field names, region evidence gating)
 
 **Decided:** Four bugs fixed across chembl.py and openalex.py, found via

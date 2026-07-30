@@ -88,17 +88,20 @@ def run_who_ingestion():
         print(f" Extracting raw data: {indicator_code} ...")
         raw_who_data = []
         try:
-            raw_who_data = extract_who_data(
+            raw_who_data, extract_succeeded = extract_who_data(
                 indicator_code, AFRICAN_COUNTRY_CODES_TO_INGEST
             )
             print(f"Extracted {len(raw_who_data)} rows for {indicator_code}.")
             if len(raw_who_data) == 0:
-                print(
-                    f" No data extracted for {indicator_code}, skipping transformation and load."
-                )
                 disease_name = INDICATOR_MAP.get(indicator_code, indicator_code)
-                with get_db() as db_session:
-                    record_coverage(db_session, "epidemiology", disease_name, "WHO GHO")
+                if extract_succeeded:
+                    print(
+                    f" No data extracted for {indicator_code}--- extraction completed, no data.Skipping load."
+                    )
+                    with get_db() as db_session:
+                        record_coverage(db_session, "epidemiology", disease_name, "WHO GHO")
+                else:
+                    print(f"No data extracted for {indicator_code} -- extraction FAILED, coverage not recorded.")
                 continue
         except Exception as e:
             print(f" Error during extraction for {indicator_code}:", {e})
@@ -143,27 +146,36 @@ def run_who_ingestion():
 def run_openalex():
     print("Starting OpenAlex ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        run_openalex_ingestion(disease_name)
-        with get_db() as db_session:
-            record_coverage(db_session, "healthcare", disease_name, "OpenAlex")
+        extract_succeeded = run_openalex_ingestion(disease_name)
+        if extract_succeeded:
+            with get_db() as db_session:
+                record_coverage(db_session, "healthcare", disease_name, "OpenAlex")
+        else:
+            print(f"Skipping coverage for {disease_name} -- OpenAlex extraction did not succeeded")
     print("OpenAlex ingestion pipeline finished.")
 
 
 def run_pubmed():
     print("Starting PubMed ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        run_pubmed_ingestion(disease_name)
-        with get_db() as db_session:
-            record_coverage(db_session, "healthcare", disease_name, "PubMed")
+        extract_succeeded = run_pubmed_ingestion(disease_name)
+        if extract_succeeded:
+            with get_db() as db_session:
+                record_coverage(db_session, "healthcare", disease_name, "PubMed")
+        else:
+            print(f"Skipping coverage for {disease_name} -- PubMed did not record the extraction")
     print("PubMed ingestion pipeline finished.")
 
 
 def run_chembl():
     print("Starting ChEMBL ingestion pipeline...")
     for disease_name in MESH_DISEASE_MAP:
-        run_chembl_ingestion(disease_name)
-        with get_db() as db_session:
-            record_coverage(db_session, "healthcare", disease_name, "ChEMBL")
+        extract_succeeded = run_chembl_ingestion(disease_name)
+        if extract_succeeded:
+            with get_db() as db_session:
+                record_coverage(db_session, "healthcare", disease_name, "ChEMBL")
+        else:
+            print(f"SKipping coverage for {disease_name}-- no data reocrded")
     print("ChEMBL ingestion complete.")
 
 if __name__ == "__main__":

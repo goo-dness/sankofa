@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import requests
 from sqlalchemy import func
@@ -18,7 +18,7 @@ DEFAULT_PAGE_SIZE = 1000  # WHO API often uses a default page size for $top
 
 def extract_who_data(
     indicator_code: str, country_codes: List[str]
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], bool]:
     """
     Extracts data for a given WHO indicator and list of country codes, handling pagination.
 
@@ -33,6 +33,7 @@ def extract_who_data(
 
     all_data = []
     skip = 0
+    extract_succeeded = True
 
     # Construct the OData filter for country codes
     country_filter_parts = [f"SpatialDim eq '{code}'" for code in country_codes]
@@ -51,6 +52,7 @@ def extract_who_data(
             )
             if response is None:
                 print(f"Could not fetch results for {indicator_code}, skipping.")
+                extract_succeeded = False
                 break
             response.raise_for_status()  # Raise an exception for HTTP errors
 
@@ -70,9 +72,10 @@ def extract_who_data(
                 skip += DEFAULT_PAGE_SIZE  # Increment skip for the next page
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
+            extract_succeeded = False
             break
 
-    return all_data
+    return all_data, extract_succeeded
 
 
 INDICATOR_MAP = {

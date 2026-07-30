@@ -9,7 +9,7 @@ from computation.queries import (
 )
 from computation.weighing import aggregate_confidence, aggregate_evidence, weigh_chain
 from computation.contradictions import detect_contradictions
-from computation.epistemic import resolve_epistemic_state
+from computation.epistemic import resolve_epistemic_state, EpistemicState
 
 CITATIONS_QUERY = text("""
     SELECT
@@ -106,10 +106,28 @@ def execute_neighborhood(db: Session, entity_id: int, depth: int = 1,) -> dict:
 
     results = [dict(r) for r in rows]
 
+    # Reconstruct from_entity_id/to_entity_id per row using direction +
+    # the newly-exposed connected_entity_id, so detect_contradictions
+    # can operate on entity pairs the same way two-hop results do.
+    for row in results:
+        if row["direction"] == "outgoing":
+            row["from_entity_id"] = entity_id
+            row["to_entity_id"] = row["connected_entity_id"]
+        else:  # "incoming"
+            row["from_entity_id"] = row["connected_entity_id"]
+            row["to_entity_id"] = entity_id
+
+    all_ids = set()
+    for r in results:
+        all_ids.update(r["relationship_ids"])
+    citations = fetch_citations(db, list(all_ids))
+
     return {
-        "entity_id": entity_id,
-        "connections": results,
-        "total_connections": len(results),
+        "epistemic_state": resolve_epistemic_state(results),
+        "query_results": results,
+        "citations": citations,
+        "contradictions": detect_contradictions(results),
+        "chain_weight": weigh_chain(results) if results else None,
     }
 
 def execute_path_query(db: Session, start_entity_id: int, end_entity_id: int, max_depth: int=3,) -> dict:
@@ -120,8 +138,25 @@ def execute_path_query(db: Session, start_entity_id: int, end_entity_id: int, ma
     }).mappings().all()
 
     results = [dict(r) for r in rows]
+    found = len(results) > 0
+
+    # contradictions/citations/chain_weight are intentionally empty:
+    # PATH_QUERY returns one collapsed best path, not competing edges
+    # per entity pair, so contradiction detection isn't meaningful
+    # here yet without restructuring into per-hop rows (deferred).
+    # PATH_QUERY also doesn't expose confidence/evidence_count per
+    # row, so aggregate_confidence/weigh_chain can't run on it as-is.
+    epistemic_state = {
+        "state": EpistemicState.KNOWN if found else EpistemicState.KNOWABLY_ABSENT,
+        "data": results,
+    }
+    if not found:
+        epistemic_state["message"] = "No path found between these entities."
 
     return {
-        "path": results[0] if results else None,
-        "found": len(results) > 0,
+        "epistemic_state": epistemic_state,
+        "query_results": results,
+        "citations": {},
+        "contradictions": [],
+        "chain_weight": None,
     }

@@ -206,7 +206,7 @@ def extract_pubmed_region(author_list):
 
 # STAGE 1: extract(disease_name)
 # Fetch raw papers (PMID list then full XML) from pubmed for one disease
-def extract(disease_name: str) -> List[ET.Element]:
+def extract(disease_name: str) -> Tuple[List[ET.Element], bool]:
     country_filters_list = []
     for country_name in LENGTH_SORTED_AFRICAN_COUNTRY_NAMES:
         country_filters_list.append(f"{country_name}[Affiliation]")
@@ -226,6 +226,7 @@ def extract(disease_name: str) -> List[ET.Element]:
 
     all_pmids = []
     offset = 0
+    extract_succeeded = True
 
     # Pagination loop for Esearch to get PMIDS
     while True:
@@ -241,16 +242,19 @@ def extract(disease_name: str) -> List[ET.Element]:
                 print(
                     f"Could not fetch Esearch results for {disease_name}, aborting this disease"
                 )
+                extract_succeeded = False
                 break
             JSON_DATA = response.json()
         except (requests.exceptions.RequestException, ValueError) as e:
             print(f"Error making Esearch request for {disease_name}: {e}")
+            extract_succeeded = False
             break
 
         if response.status_code != 200:
             print(
                 f"Error fetching PMIDs for {disease_name}: {response.status_code} - {response.text}"
             )
+            extract_succeeded = False
             break
 
         pmid_list = JSON_DATA.get("esearchresult", {}).get("idlist", [])
@@ -276,7 +280,7 @@ def extract(disease_name: str) -> List[ET.Element]:
     print(f"Fetched {len(all_pmids)} total PMIDs for {disease_name}")
 
     if len(all_pmids) == 0:
-        return []
+        return [], extract_succeeded
 
     # Batch Efetch for full XML records
     raw_pubmed_records = []
@@ -305,18 +309,21 @@ def extract(disease_name: str) -> List[ET.Element]:
             )
             if response is None:
                 print(f"Could not fetch batch for {disease_name}, skipping this batch")
+                extract_succeeded = False
                 continue
             XML_TREE = ET.fromstring(response.content.decode("utf-8"))
         except (requests.exceptions.RequestException, ET.ParseError) as e:
             print(
                 f"Error fetching/parsing XML records for {disease_name} (batch {i + 1}): {e}"
             )
+            extract_succeeded = False
             continue
 
         if response.status_code != 200:
             print(
                 f"Error fetching XML records for {disease_name} ( {comma_separated_pmids}: {response.status_code} - {response.text}"
             )
+            extract_succeeded = False
             continue
 
         PubmedArticleSet_ELEMENT = XML_TREE.find(".")
@@ -328,7 +335,7 @@ def extract(disease_name: str) -> List[ET.Element]:
         time.sleep(0.1)
 
     print(f"Fetched {len(raw_pubmed_records)} XML records for {disease_name}")
-    return raw_pubmed_records
+    return raw_pubmed_records, extract_succeeded
 
 
 # Stage 2: transform(raw_records, disease_name)
@@ -759,11 +766,14 @@ def load(entities, relationships, sources, db_session):
 def run_pubmed_ingestion(disease_name):
     print(f"Starting PubMed ingestion for: {disease_name}")
 
-    raw_records = extract(disease_name)
+    raw_records, extract_succeeded = extract(disease_name)
 
     if not raw_records:
-        print(f"No records found for {disease_name}, aborting")
-        return
+        if extract_succeeded:
+            print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
+        else:
+            print(f"No records found for {disease_name}--- extraction FAILED, this is NOT a verified absence, do not treat as checked")
+        return extract_succeeded
     entities, relationships, sources = transform(raw_records, disease_name)
     db_session = SessionLocal()
 
@@ -774,3 +784,4 @@ def run_pubmed_ingestion(disease_name):
     finally:
         db_session.close()
     print(f"Ingestion complete for: {disease_name}")
+    return extract_succeeded

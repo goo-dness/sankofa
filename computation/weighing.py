@@ -59,7 +59,7 @@ def weigh_derived_fact(premises: list[dict]) -> dict:
     if not premises:
         return{
             "score": 0.0,
-            "tier": 0,
+            "confidence": 0,
             "depth": 0
         }
 

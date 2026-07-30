@@ -64,6 +64,7 @@ def extract(disease_name):
     raw_molecules_data = []
     raw_mechanisms_data = []
     raw_targets_data = []
+    extract_succeeded = True
 
     #1a: look up the mesh_id(s) for the diease
     mesh_ids = MESH_DISEASE_MAP.get(disease_name)
@@ -88,21 +89,25 @@ def extract(disease_name):
             except requests.exceptions.RequestException as e:
                 print(f"Error making API request for {disease_name} (mesh_id: {mesh_id}, URL: {current_page_url}): {e}")
                 current_page_url = None
+                extract_succeeded = False
                 break
             if response is None:
                 print(f"API failed after retries for {disease_name} (mesh_id: {mesh_id})")
                 current_page_url = None
+                extract_succeeded = False
                 break
             try:
                 JSON_DATA = response.json()
             except json.JSONDecodeError as e:
                 print(f"Error decoding json for {disease_name} (mesh_id: {mesh_id}, URL: {current_page_url}): {e}. Response: {response.text[:200]}...")
                 current_page_url = None
+                extract_succeeded = False
                 break
 
             if response.status_code != 200 or JSON_DATA.get('drug_indications') is None:
                 print(f"Error or no drug_indications found for {disease_name} (mesh_id: {mesh_id}) on page {current_page_url}")
                 current_page_url = None # Stop pagination
+                extract_succeeded = False
                 break
             for indication_record in JSON_DATA.get('drug_indications'):
                 raw_drug_indications_data.append(indication_record)
@@ -145,12 +150,14 @@ def extract(disease_name):
 
         if response is None:
             print(f"API failed after retries for molecule {molecule_chembl_id}")
+            extract_succeeded = False
         else:
             JSON_DATA = response.json()
             if response.status_code == 200 and JSON_DATA.get('molecule_chembl_id') is not None:
                 raw_molecules_data.append(JSON_DATA)
             else:
                 print(f"Error or no molecule details found for {molecule_chembl_id}")
+                extract_succeeded = False
 
 
         # Query /mechanism?molecule_chembl_id=<id>, capped at N per molecule
@@ -165,6 +172,7 @@ def extract(disease_name):
 
         if response is None:
             print(f"API failed after retries for mechanism {molecule_chembl_id}")
+            extract_succeeded = False
         else:
             try:
                 JSON_DATA = response.json()
@@ -179,6 +187,7 @@ def extract(disease_name):
                     unique_target_chembl_id.add(mechanism_record.get('target_chembl_id'))
             else:
                 print(f"Error or no mechanisms found for {molecule_chembl_id}")
+                extract_succeeded = False
 
         time.sleep(0.1)
 
@@ -197,6 +206,7 @@ def extract(disease_name):
 
         if response is None:
             print(f"API failed after retries for target {target_chembl_id}")
+            extract_succeeded = False
         else:
             try:
                 JSON_DATA = response.json()
@@ -207,6 +217,7 @@ def extract(disease_name):
                 raw_targets_data.append(JSON_DATA)
             else:
                 print(f"Error or no target details found for {target_chembl_id}")
+                extract_succeeded = False
 
         time.sleep(0.1)
 
@@ -214,7 +225,8 @@ def extract(disease_name):
         "indications": raw_drug_indications_data,
         "molecules": raw_molecules_data,
         "mechanisms": raw_mechanisms_data,
-        "targets": raw_targets_data
+        "targets": raw_targets_data,
+        "success": extract_succeeded
     }
 
 # Stage 2: transform(raw_data, disease_name)
@@ -300,8 +312,9 @@ def transform(raw_data, disease_name):
                 }
 
             deduped_indications_map[dedupe_key]["indication_refs"].extend(current_indication_refs)
-            if max_phase_float > deduped_indications_map[dedupe_key]["max_phase_for_ind"]:
-                deduped_indications_map[dedupe_key]["max_phase_for_ind"] = max_phase_float
+            deduped_indications_map[dedupe_key]["max_phase_for_id"] = max(
+                max_phase_float, deduped_indications_map[dedupe_key]["max_phase_for_id"]
+            )
         except Exception as e:
             print(f"Error processing indication record for dedupe: {e}")
             continue
@@ -613,7 +626,7 @@ def load(entities, relationships, sources, db_session: Session):
 
                 entity = db_session.query(Entity).filter_by(id=entity_id).first()
                 if entity:
-                    entity.evidence_count += 1
+                    entity.evidence_count += 1 # type: ignore[assignment]
                 print(f"Added new source for entity {entity_name} ({domain}): {source_dict['source_url']}")
             else:
                 print(f"Skipping duplicate source for entity {entity_name} ({domain}): {source_dict['source_url']}")
@@ -663,9 +676,8 @@ def load(entities, relationships, sources, db_session: Session):
                     .first()
                 )
                 if not existing_rel_source:
-                    existing_entity_relations.evidence_count += 1
-                    if confidence > existing_entity_relations.confidence:
-                        existing_entity_relations.confidence = confidence
+                    existing_entity_relations.evidence_count += 1 # type: ignore[assignment]
+                    existing_entity_relations.confidence = max(confidence, existing_entity_relations.confidence)
 
                     new_rel_source = RelationshipSource(
                         relationship_id=existing_entity_relations.id,
@@ -729,14 +741,17 @@ def run_chembl_ingestion(disease_name):
     print(f"Starting ChEMBL ingestion for: {disease_name}")
 
     raw_data = extract(disease_name)
-
+    extract_succeeded = raw_data.get("success", True)
     if (
         not raw_data.get("indications")
         and not raw_data.get("molecules")
         and not raw_data.get("mechanisms")
         and not raw_data.get("targets")
     ):
-        print(f"No records found for {disease_name}, aborting")
+        if extract_succeeded:
+            print(f"No records found for {disease_name}--- extraction successfully, no data exists.")
+        else:
+            print(f"No records found for {disease_name} --- extraction FAILED, this is not a verified absence.")
         return
 
     entities, relationships, sources = transform(raw_data, disease_name)
@@ -750,3 +765,4 @@ def run_chembl_ingestion(disease_name):
         db_session.close()
 
     print(f"ChEMBL ingestion complete for: {disease_name}")
+    return extract_succeeded

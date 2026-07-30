@@ -270,7 +270,7 @@ INDIGENOUS_KEYWORDS = [
 
 
 # Openalex stores abstracts as word-to-positions mapping, I rebuild the original sentence from that mapping
-def reconstruct_abstract(abstract_inverted_index: Dict[str, List]) -> str:
+def reconstruct_abstract(abstract_inverted_index: Dict[str, dict]) -> str:
     if not abstract_inverted_index:
         return ""
 
@@ -320,7 +320,7 @@ def extract_region(authorships: List[Dict[str, Any]]) -> str:
 
 
 # ---Stage 1: Fetch raw data from openalex
-def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
+def extract_openalex_data(disease_name: str) -> Tuple[List[Dict[str, Any]], bool]:
     # Build the filter string OpenAlex expects
     filter_conditions = [
         f"title.search.exact:{disease_name}",
@@ -337,6 +337,7 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
     }
 
     raw_records: List[Dict[str, Any]] = []
+    extract_succeeded = True
 
     while True:
         print(f"Making GET  request to {OPENALEX_URL} with params: {request_params}")
@@ -345,12 +346,14 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
         )
         if response is None:
             print(f"Could not fetch results for {disease_name}, skipping disease")
+            extract_succeeded = False
             break
         # Raise an exception for HTTP errors
         if response.status_code != 200:
             print(
                 f"Error fetching data for {disease_name}: {response.status_code} - {response.text}"
             )
+            extract_succeeded = False
             break
         # Parse the JSON response
         data = response.json()
@@ -373,7 +376,7 @@ def extract_openalex_data(disease_name: str) -> List[Dict[str, Any]]:
         time.sleep(0.1)
 
     print(f"Fethed {len(raw_records)} records for {disease_name}")
-    return raw_records
+    return raw_records, extract_succeeded
 
 
 # ---Stage 2: Convert raw OpenAlex records into Sankofa entity dicts
@@ -649,13 +652,7 @@ def load(entities, relationships, sources, db_session):
                 if not existing_rel_source:
                     existing_relationship.evidence_count += 1
 
-                    if (
-                        relationship_dict["confidence"]
-                        > existing_relationship.confidence
-                    ):
-                        existing_relationship.confidence = relationship_dict[
-                            "confidence"
-                        ]
+                    existing_relationship.confidence = max(relationship_dict["confidence"], existing_relationship.confidence)
 
                     new_rel_source = RelationshipSource(
                         relationship_id=existing_relationship.id,
@@ -717,11 +714,14 @@ def load(entities, relationships, sources, db_session):
 def run_openalex_ingestion(disease_name):
     print(f"Starting OpenAlex ingestion for: {disease_name}")
 
-    raw_records = extract_openalex_data(disease_name)
+    raw_records, extract_succeeded = extract_openalex_data(disease_name)
 
     if not raw_records:
+        if extract_succeeded:
         # If no record exists abort the operation
-        print(f"No records found for {disease_name}, aborting")
+            print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
+        else:
+            print(f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence.")
         return
 
     entities, relationships, sources = transform(raw_records, disease_name)
@@ -738,3 +738,4 @@ def run_openalex_ingestion(disease_name):
         db_session.close()
 
     print(f"Integration complete for:  {disease_name}")
+    return extract_succeeded
