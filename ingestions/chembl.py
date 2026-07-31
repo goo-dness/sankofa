@@ -312,8 +312,8 @@ def transform(raw_data, disease_name):
                 }
 
             deduped_indications_map[dedupe_key]["indication_refs"].extend(current_indication_refs)
-            deduped_indications_map[dedupe_key]["max_phase_for_id"] = max(
-                max_phase_float, deduped_indications_map[dedupe_key]["max_phase_for_id"]
+            deduped_indications_map[dedupe_key]["max_phase_for_ind"] = max(
+                max_phase_float, deduped_indications_map[dedupe_key]["max_phase_for_ind"]
             )
         except Exception as e:
             print(f"Error processing indication record for dedupe: {e}")
@@ -752,7 +752,7 @@ def run_chembl_ingestion(disease_name):
             print(f"No records found for {disease_name}--- extraction successfully, no data exists.")
         else:
             print(f"No records found for {disease_name} --- extraction FAILED, this is not a verified absence.")
-        return
+        return extract_succeeded, set()
 
     entities, relationships, sources = transform(raw_data, disease_name)
 
@@ -764,5 +764,6 @@ def run_chembl_ingestion(disease_name):
     finally:
         db_session.close()
 
+    touched_relationship_types = set(r["relationship"] for r in relationships)
     print(f"ChEMBL ingestion complete for: {disease_name}")
-    return extract_succeeded
+    return extract_succeeded, touched_relationship_types

@@ -722,12 +722,12 @@ def run_openalex_ingestion(disease_name):
             print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
         else:
             print(f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence.")
-        return
+        return extract_succeeded, set()
 
     entities, relationships, sources = transform(raw_records, disease_name)
     if entities is None or relationships is None or sources is None:
         print(f"Error: Transform stage returned None for {disease_name}")
-        return
+        return False, set()
     db_session = SessionLocal()
 
     try:
@@ -737,5 +737,6 @@ def run_openalex_ingestion(disease_name):
     finally:
         db_session.close()
 
+    touched_relationship_types = set(r["relationship"] for r in relationships)
     print(f"Integration complete for:  {disease_name}")
-    return extract_succeeded
+    return extract_succeeded, touched_relationship_types

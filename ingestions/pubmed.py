@@ -767,7 +767,7 @@ def run_pubmed_ingestion(disease_name):
             print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
         else:
             print(f"No records found for {disease_name}--- extraction FAILED, this is NOT a verified absence, do not treat as checked")
-        return extract_succeeded
+        return extract_succeeded, set()
     entities, relationships, sources = transform(raw_records, disease_name)
     db_session = SessionLocal()
 
@@ -777,5 +777,7 @@ def run_pubmed_ingestion(disease_name):
         print(f"Error during load stage for {disease_name}: {e}")
     finally:
         db_session.close()
+
+    touched_relationship_types = set(r["relationship"] for r in relationships)
     print(f"Ingestion complete for: {disease_name}")
-    return extract_succeeded
+    return extract_succeeded, touched_relationship_types

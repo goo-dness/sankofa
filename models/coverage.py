@@ -12,10 +12,11 @@ class IngestionCoverage(Base):
     domain = Column(String, nullable=False)
     disease_name = Column(String, nullable=False)
     source_name = Column(String, nullable=False)
+    relationship_type = Column(String, nullable=False)
     last_ingested_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     __table_args__ = (
-        UniqueConstraint("disease_name", "source_name", name="uq_disease_source"),
+        UniqueConstraint("disease_name", "source_name", "relationship_type", name="uq_disease_source_reltype"),
     )
