@@ -37,43 +37,55 @@ This is a long-term expansion target, not a near-term build item. Healthcare rem
 
 ---
 
-## 2. Project Structure (locked, flat)
+## 2. Project Structure (verified against live filesystem, 2026-08-01)
+
+Real root is `sankofa/`, with everything below living under a `backend/` subfolder — not flat at repo root as earlier versions of this doc showed. `scripts/` sits at repo root, alongside `backend/`, not inside it.
 
 ```
-sankofa/
-├── main.py
-├── app/
-│   ├── database.py
-│   ├── config.py
-│   └── http_utils.py     (shared get_with_retry — used by every ingestion)
-├── models/
-│   ├── entities.py
-│   ├── entity_names.py
-│   ├── entity_relationships.py
-│   ├── entity_sources.py
-│   ├── entity_people.py
-│   ├── relationship_sources.py
-│   ├── relations_type.py
-│   └── coverage.py       (IngestionCoverage — three-state awareness)
-├── schemas/              (mirrors models, ConfigDict from_attributes=True)
-├── routers/
-│   └── entities.py       (no crud.py — routers handle DB ops directly)
-├── computation/           (Computational Symbolic Engine — Layer 2)
-│   ├── __init__.py
-│   ├── queries.py         (CTE SQL queries)
-│   ├── executor.py        (execute_single_hop, execute_two_hop, etc.)
-│   ├── weighing.py        (aggregate_confidence, aggregate_evidence, weigh_chain)
-│   ├── contradictions.py  (detect_contradictions, CONFLICT_PAIRS)
-│   └── epistemic.py       (resolve_epistemic_state, EpistemicState enum)
-├── data/
-│   ├── relationship_types.py
-│   └── seed.py           (owns all orchestrator functions — run_who(), run_openalex(), run_pubmed())
-├── ingestions/
-│   ├── who.py
-│   ├── openalex.py
-│   ├── pubmed.py         ✅ complete
-│   └── chembl.py         ✅ complete
-└── migrations/           (Alembic)
+sankofa/                    (repo root)
+├── README.md
+├── scripts/
+│   └── cleanup_duplicates.py
+└── backend/               (everything below lives here, not at repo root)
+    ├── main.py
+    ├── alembic.ini
+    ├── requirements.txt
+    ├── CONTEXT.md
+    ├── SL4_ARCHITECTURE.md
+    ├── .env / .env.example
+    ├── app/
+    │   ├── database.py
+    │   ├── config.py
+    │   └── http_utils.py     (shared get_with_retry — used by every ingestion)
+    ├── models/
+    │   ├── entities.py
+    │   ├── entity_names.py
+    │   ├── entity_relationships.py    (EntityRelations — has derived_from/derivation_depth, see §13 2026-08-01)
+    │   ├── entity_sources.py
+    │   ├── entity_people.py
+    │   ├── relationship_sources.py
+    │   ├── relations_type.py
+    │   └── coverage.py       (IngestionCoverage — relationship_type-granular, see §13 2026-08-01)
+    ├── schemas/               (mirrors models 1:1, ConfigDict from_attributes=True — entities, entity_names, entity_people, entity_relationships, entity_sources, relations_type, relationship_sources)
+    ├── routers/               (mirrors models 1:1, one router per table — entities, entity_names, entity_people, entity_relationships, entity_sources, relations_type, relationship_sources; no engine.py yet, planned for Layer 2 API per SL4_ARCHITECTURE.md §6)
+    ├── computation/           (Computational Symbolic Engine — Layer 2)
+    │   ├── __init__.py
+    │   ├── queries.py         (CTE SQL queries)
+    │   ├── executor.py        (execute_single_hop, execute_two_hop, etc.)
+    │   ├── weighing.py        (aggregate_confidence, aggregate_evidence, weigh_chain, weigh_derived_fact)
+    │   ├── contradictions.py  (detect_contradictions, CONFLICT_PAIRS)
+    │   └── epistemic.py       (resolve_epistemic_state, EpistemicState enum)
+    │   (rules.py not yet created — Layer 2/3 derivation, blocked on causes ingestion data, see §13 2026-08-01)
+    ├── data/
+    │   ├── relationship_types.py
+    │   └── seed.py           (owns all orchestrator functions — run_who_ingestion(), run_openalex(), run_pubmed(), run_chembl(), record_coverage())
+    ├── ingestions/
+    │   ├── who.py
+    │   ├── openalex.py       ✅ complete, now includes causes detection (§13 2026-08-01)
+    │   ├── pubmed.py         ✅ complete, now includes causes detection (§13 2026-08-01)
+    │   └── chembl.py         ✅ complete
+    ├── migrations/            (Alembic — env.py, script.py.mako, versions/)
+    └── tests/                 (empty — no tests written yet)
 ```
 
 ---
