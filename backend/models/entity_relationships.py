@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, ARRAY
 
 from app.database import Base
 
@@ -16,6 +16,8 @@ class EntityRelations(Base):
     confidence = Column(Integer, nullable=False, default=1)
     evidence_count = Column(Integer, nullable=False, default=1)
     context = Column(String)
+    derived_from = Column(ARRAY(Integer), nullable=True)
+    derivation_depth = Column(Integer, nullable=True, default=0)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

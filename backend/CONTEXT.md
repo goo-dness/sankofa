@@ -97,8 +97,9 @@ Lives in the DB, not an enum. 50+ seeded relationships across domains: pathology
 
 **Other tables (not yet populated by any ingestion):** `entity_names`, `entity_people`.
 
+
 **ingestion_coverage**
-`id, domain, disease_name, source_name, last_ingested_at` — tracks which diseases have been ingested by which sources. Enables three-state epistemic awareness (§9). Unique constraint on `(disease_name, source_name)`. Populated by each ingestion pipeline via `record_coverage()` in `data/seed.py`.
+`id, domain, disease_name, source_name, relationship_type, last_ingested_at` — tracks which (disease, source, relationship_type) combinations have been ingested. Enables three-state epistemic awareness (§9) at relationship-type granularity. Unique constraint `uq_disease_source_reltype` on `(disease_name, source_name, relationship_type)`. Populated by each ingestion pipeline via `record_coverage()` in `data/seed.py`, once per relationship type actually touched in a run.
 
 **Confidence tiers:** 1 = Traditional, 2 = Emerging, 3 = Established.
 
@@ -255,6 +256,80 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-08-01 — ChEMBL max_phase_for_ind key typo fixed (confidence tiering was silently broken)
+
+**Decided:** Fixed a dict key typo in chembl.py's transform() dedupe
+block — initialized as `max_phase_for_ind`, updated as `max_phase_for_id`
+(one letter off). The KeyError on update was swallowed by the
+surrounding per-record try/except, so it failed silently every time.
+Net effect: `max_phase_for_ind` stayed frozen at 0.0 forever, so every
+ChEMBL "treats" relationship fell through to confidence=1 (Traditional)
+regardless of actual clinical trial phase.
+
+**Why:** Caught via line-by-line review, not by symptom — same silent
+failure mode as the earlier `indication_refs` field-name bug.
+
+**Rules out:** N/A — typo fix, no design change.
+
+**Unblocks:** ChEMBL confidence tiering now works as designed. Not yet
+verified via live run — re-run ChEMBL for a disease with a known Phase 4
+drug (malaria + an artemisinin combination) and confirm treats_confidence
+lands on 3, not 1.
+
+### 2026-08-01 — Coverage granularity (Option B) implemented: relationship_type added to ingestion_coverage
+
+**Decided:** Closes the open item from 2026-07-29/30 — `ingestion_coverage`
+now tracks coverage per `(disease_name, source_name, relationship_type)`,
+not just per `(disease_name, source_name)`. `models/coverage.py`'s
+`IngestionCoverage` gained a non-nullable `relationship_type` column; the
+unique constraint was renamed `uq_disease_source_reltype` and now spans
+all three fields. Table was truncated as part of the migration (same
+precedent as the entity_sources/relationship_sources author/title
+migration) — no backfill.
+
+`record_coverage()` in seed.py gained a required `relationship_type`
+parameter. Every orchestrator (`run_who_ingestion`, `run_openalex`,
+`run_pubmed`, `run_chembl`) now calls it once per relationship type
+actually touched in that run, derived from the real `relationships` list
+each `transform()` produced — not from a static per-pipeline "capability
+list." `run_openalex_ingestion()`, `run_pubmed_ingestion()`, and
+`run_chembl_ingestion()` all changed their return signature from a single
+`extract_succeeded` bool to `(extract_succeeded, touched_relationship_types)`
+to carry this back to seed.py.
+
+WHO is the one deliberate exception: `transform_to_entities()`
+unconditionally emits both `measures` and `prevalent_in` for every row
+(no vocabulary-match branching like OpenAlex/PubMed's `treats` detection),
+so the zero-data-found branch in `run_who_ingestion()` hardcodes both
+types rather than deriving from an empty relationships list — a true
+statement about that pipeline's deterministic logic, not an assumption.
+
+**Why:** A researcher asking "does X treat Y" needs coverage precision at
+the relationship-type level, not just disease/source — the same
+distinction the extraction_succeeded fix drew between "checked, found
+nothing" and "never checked." Deriving touched types from real per-run
+output avoids the same false-KNOWABLY_ABSENT trap.
+
+**Rules out:** A static per-pipeline relationship-type capability list as
+the source of truth for coverage rows.
+
+**Known trade-off, accepted:** if extraction succeeds but a specific
+relationship type produces zero rows this run (e.g. OpenAlex scans an
+abstract but finds no TREATMENT_VOCABULARY match), no coverage row is
+written for that type — it reads as UNCHARTED rather than
+KNOWABLY_ABSENT, even though the check genuinely happened. Deliberate
+cost of never fabricating a coverage claim from an assumed list.
+
+**Status — NOT YET verified via live run.** Migration applied and
+confirmed via `\d ingestion_coverage`. All four Python files edited via
+find/replace, not yet run end-to-end. Next session should start with:
+one pipeline run (OpenAlex, malaria), then:
+`SELECT disease_name, source_name, relationship_type FROM ingestion_coverage WHERE source_name = 'OpenAlex' AND disease_name = 'malaria';`
+— expect two rows (prevalent_in, treats), not one merged row.
+
+**Unblocks:** Once verified, closes the last open item blocking real
+three-state epistemic queries in Layer 2 (§9).
 
 ### 2026-07-29/30 — Ingestion coverage: extraction_succeeded signal threaded through all four pipelines + seed.py
 

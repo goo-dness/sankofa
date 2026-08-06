@@ -17,6 +17,7 @@ from models.relationship_sources import RelationshipSource
 OPENALEX_URL = "https://api.openalex.org/works"
 PER_PAGE = 50
 CAP = 500
+CAUSAL_AGENT_ENTITY_TYPE = "CausalAgent"
 DISEASE_VOCABULARY = [
     "malaria",
     "HIV",
@@ -249,6 +250,43 @@ TREATMENT_VOCABULARY = {
     "lassa fever": ["ribavirin", "supportive care"],
     "marburg virus": ["monoclonal antibodies", "supportive care"],
     "rift valley fever": ["ribavirin", "supportive care"],
+}
+CAUSAL_AGENT_VOCABULARY = {
+    "malaria": ["plasmodium falciparum", "plasmodium vivax", "anopheles mosquito", "malaria parasite", "anopheles", "plasmodium"],
+    "HIV": ["human immunodeficiency virus", "hiv-1", "hiv-2", "retrovirus"],
+    "tuberculosis": ["mycobacterium tuberculosis", "m. tuberculosis", "tubercle bacillus", "mycobacterium"],
+    "pneumonia": ["streptococcus pneumoniae", "pneumococcus", "haemophilus influenzae", "respiratory syncytial virus", "klebsiella pneumoniae"],
+    "cholera": ["vibrio cholerae", "v. cholerae", "cholera toxin"],
+    "typhoid fever": ["salmonella typhi", "salmonella enterica serovar typhi", "s. typhi"],
+    "meningitis": ["neisseria meningitidis", "meningococcus", "streptococcus pneumoniae", "haemophilus influenzae type b", "hib"],
+    "hepatitis B": ["hepatitis b virus", "hbv"],
+    "hepatitis C": ["hepatitis c virus", "hcv"],
+    "diarrhoeal disease": ["rotavirus", "escherichia coli", "enterotoxigenic e. coli", "shigella", "vibrio cholerae", "cryptosporidium"],
+    "yellow fever": ["yellow fever virus", "flavivirus", "aedes aegypti"],
+    "dengue fever": ["dengue virus", "denv", "aedes aegypti", "aedes albopictus"],
+    "ebola": ["ebola virus", "zaire ebolavirus", "filovirus"],
+    "mpox": ["monkeypox virus", "mpox virus", "orthopoxvirus"],
+    "schistosomiasis": ["schistosoma mansoni", "schistosoma haematobium", "schistosoma japonicum", "freshwater snail"],
+    "onchocerciasis": ["onchocerca volvulus", "blackfly", "simulium"],
+    "lymphatic filariasis": ["wuchereria bancrofti", "brugia malayi", "brugia timori", "mosquito vector"],
+    "trachoma": ["chlamydia trachomatis"],
+    "trypanosomiasis": ["trypanosoma brucei", "tsetse fly", "trypanosoma brucei gambiense", "trypanosoma brucei rhodesiense"],
+    "leishmaniasis": ["leishmania parasite", "sandfly", "leishmania donovani", "phlebotomus"],
+    "buruli ulcer": ["mycobacterium ulcerans"],
+    "leprosy": ["mycobacterium leprae"],
+    "guinea worm": ["dracunculus medinensis", "guinea worm larvae", "copepod"],
+    "soil-transmitted helminths": ["ascaris lumbricoides", "hookworm", "trichuris trichiura", "necator americanus"],
+    "sickle cell disease": ["hbb gene mutation", "hemoglobin s", "hbb gene", "beta globin gene", "point mutation", "valine substitution"],
+    "G6PD deficiency": ["g6pd gene mutation", "glucose-6-phosphate dehydrogenase deficiency", "x-linked mutation"],
+    "thalassaemia": ["hba gene mutation", "hbb gene mutation", "alpha globin gene deletion", "beta globin gene mutation"],
+    "malnutrition": ["micronutrient deficiency", "protein-energy deficiency", "vitamin a deficiency", "iron deficiency", "iodine deficiency", "undernutrition", "marasmus", "kwashiorkor"],
+    "neonatal sepsis": ["group b streptococcus", "escherichia coli", "klebsiella", "early-onset sepsis", "late-onset sepsis"],
+    "obstetric fistula": ["prolonged obstructed labour", "obstructed labor", "prolonged labor"],
+    "preeclampsia": ["placental insufficiency", "endothelial dysfunction", "angiogenic imbalance", "sflt-1", "vegf", "plgf"],
+    "stunting": ["chronic undernutrition", "micronutrient deficiency", "repeated infection", "poor maternal nutrition"],
+    "lassa fever": ["lassa virus", "arenavirus", "mastomys natalensis", "multimammate rat"],
+    "marburg virus": ["marburg virus", "filovirus", "rousettus aegyptiacus", "fruit bat"],
+    "rift valley fever": ["rift valley fever virus", "phlebovirus", "aedes mosquito", "culex mosquito"],
 }
 TREATMENT_KEYWORDS = [
     "treatment",
@@ -514,6 +552,45 @@ def transform(
                     "source_title": paper.get("title", ""),
                 }
                 relationships.append(treats_relationship_dict)
+
+            found_causal_agents = []
+            for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
+                if causal_agent_term in abstract_text_lower:
+                    found_causal_agents.append(causal_agent_term)
+
+            for actual_causal_agent in found_causal_agents:
+                causal_agent_entity_dict = {}
+                causal_agent_entity_dict["name"] = actual_causal_agent
+                causal_agent_entity_dict["domain"] = "healthcare"
+                causal_agent_entity_dict["entity_type"] = CAUSAL_AGENT_ENTITY_TYPE
+                causal_agent_entity_dict["region"] = region
+                causal_agent_entity_dict["expression"] = paper.get("title")
+                causal_agent_entity_dict["confidence"] = confidence
+                causal_agent_entity_dict["contributor"] = "OpenAlex"
+                entities.append(causal_agent_entity_dict)
+
+                causal_agent_source_dict = {}
+                causal_agent_source_dict["entity_name"] = actual_causal_agent
+                causal_agent_source_dict["domain"] = "healthcare"
+                causal_agent_source_dict["source_name"] = "OpenAlex"
+                causal_agent_source_dict["source_url"] = paper.get("doi") if paper.get("doi") else paper.get("id")
+                causal_agent_source_dict["source_author"] = first_author
+                causal_agent_source_dict["source_title"] = paper.get("title", "")
+                sources.append(causal_agent_source_dict)
+
+                causes_relationship_dict = {}
+                causes_relationship_dict["from_entity_name"] = actual_causal_agent
+                causes_relationship_dict["from_entity_domain"] = "healthcare"
+                causes_relationship_dict["to_entity_name"] = disease_name
+                causes_relationship_dict["to_entity_domain"] = "healthcare"
+                causes_relationship_dict["relationship"] = "causes"
+                causes_relationship_dict["confidence"] = confidence
+                causes_relationship_dict["context"] = paper.get("title")
+                causes_relationship_dict["source_url"] = paper.get("doi") if paper.get("doi") else paper.get("id")
+                causes_relationship_dict["source_author"] = first_author
+                causes_relationship_dict["source_title"] = paper.get("title", "")
+                relationships.append(causes_relationship_dict)
+
         except Exception as e:
             paper_id = paper.get("id", "N/A")
             print(f"Warning: Skipping paper ID: {paper_id}")
@@ -718,7 +795,7 @@ def run_openalex_ingestion(disease_name):
 
     if not raw_records:
         if extract_succeeded:
-        # If no record exists abort the operation
+            # If no record exists abort the operation
             print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
         else:
             print(f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence.")

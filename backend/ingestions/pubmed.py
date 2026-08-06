@@ -13,12 +13,15 @@ from ingestions.openalex import (
     DISEASE_VOCABULARY,
     TREATMENT_VOCABULARY,
     determine_entity_type,
+    CAUSAL_AGENT_VOCABULARY,
+    CAUSAL_AGENT_ENTITY_TYPE
 )
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
+
 
 PUBMED_ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -543,6 +546,48 @@ def transform(raw_records, disease_name):
                         "source_title": ArticleTitle_TEXT
                     }
                     relationships.append(treats_relationship_dict)
+
+            found_causal_agents = []
+            for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
+                if causal_agent_term in concatenated_abstract_string_lower:
+                    found_causal_agents.append(causal_agent_term)
+
+            for actual_causal_agent in found_causal_agents:
+                causal_agent_entity_dict = {}
+                causal_agent_entity_dict["name"] = actual_causal_agent
+                causal_agent_entity_dict["domain"] = "healthcare"
+                causal_agent_entity_dict["entity_type"] = CAUSAL_AGENT_ENTITY_TYPE
+                causal_agent_entity_dict["region"] = region_name
+                causal_agent_entity_dict["expression"] = ArticleTitle_TEXT
+                causal_agent_entity_dict["confidence"] = confidence_tier_for_this_paper
+                causal_agent_entity_dict["contributor"] = "PubMed"
+                entities.append(causal_agent_entity_dict)
+
+                causal_agent_source_dict = {}
+                causal_agent_source_dict["entity_name"] = actual_causal_agent
+                causal_agent_source_dict["domain"] = "healthcare"
+                causal_agent_source_dict["source_name"] = "PubMed"
+                causal_agent_source_dict["source_url"] = paper_source_url
+                causal_agent_source_dict["confidence"] = confidence_tier_for_this_paper
+                causal_agent_source_dict["context"] = ArticleTitle_TEXT
+                causal_agent_source_dict["source_author"] = first_author
+                causal_agent_source_dict["source_title"] = ArticleTitle_TEXT
+                sources.append(causal_agent_source_dict)
+
+                causes_relationship_dict = {}
+                causes_relationship_dict["from_entity_name"] = actual_causal_agent
+                causes_relationship_dict["from_entity_domain"] = "healthcare"
+                causes_relationship_dict["to_entity_name"] = disease_name
+                causes_relationship_dict["to_entity_domain"] = "healthcare"
+                causes_relationship_dict["relationship"] = "causes"
+                causes_relationship_dict["confidence"] = confidence_tier_for_this_paper
+                causes_relationship_dict["context"] = ArticleTitle_TEXT
+                causes_relationship_dict["source_url"] = paper_source_url
+                causes_relationship_dict["source_name"] = "PubMed"
+                causes_relationship_dict["source_author"] = first_author
+                causes_relationship_dict["source_title"] = ArticleTitle_TEXT
+                relationships.append(causes_relationship_dict)
+
         except Exception as error:
             print(
                 f"Warning: Skipping malformed PubMed record (PMID: {current_pmid} for {disease_name} during transform: {error}"
