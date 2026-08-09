@@ -249,7 +249,7 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 ## 11. Working Method (how this project gets built)
 
-- **Pseudocode-first, real code only on request.** Logic gets planned and reviewed in a consistent pseudocode style (ALL CAPS actions, `//` comments, FUNCTION/END FUNCTION) before any real code is written, so the developer types every line by hand and understands it — no copy-pasting, ever.
+- **Pseudocode-first, real code only on request.** Claude writes the pseudocode directly in chat (Gemini/Zed no longer used for pseudocode generation, as of 2026-08-09 — see Decision Log) in a consistent pseudocode style (ALL CAPS actions, `//` comments, FUNCTION/END FUNCTION) before any real code is written, so the developer types every line by hand and understands it — no copy-pasting, ever.
 - **The assistant provides architecture decisions, pseudocode, and file-level guidance only.** The developer types all real code by hand. Never output complete, runnable code. If the developer explicitly says "write the code" for a specific fix, that is the only exception — otherwise pseudocode only, always.
 - **Verify against real API output before writing logic.** Every ingestion source's actual JSON/XML shape gets pulled and inspected via curl before pseudocode is finalized — several real bugs (missing `continent` field on OpenAlex institutions, PubMed's inconsistent MeSH tagging, the "Niger"/"Nigeria" substring bug) were only caught this way, not by reading documentation.
 - **Explain code line by line.** Standing rule across all sessions.
@@ -268,6 +268,27 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-08-09 — Gemini removed from pseudocode role; Claude generates pseudocode directly
+
+**Decided:** Standing workflow updated (see §11) — Claude now writes all
+pseudocode directly in chat. Gemini (in Zed) is no longer used to
+generate pseudocode from Claude-written prompts. Rest of the working
+method is unchanged: developer still hand-types every real line of code
+himself, runs all commands himself, and brings errors back to Claude to
+debug together.
+
+**Why:** Removes a translation hop (Claude writes a prompt → Gemini
+generates pseudocode) that added a step without adding value, now that
+Claude produces pseudocode reliably in the established ALL CAPS /
+`//` / FUNCTION-END FUNCTION style directly.
+
+**Rules out:** Routing pseudocode generation through Gemini for any
+future session, including the "longer-token pseudocode generation"
+case Gemini was previously kept around for.
+
+**Unblocks:** One fewer context-switch per pseudocode request going
+forward.
 
 ### 2026-08-01 — ChEMBL max_phase_for_ind key typo fixed (confidence tiering was silently broken)
 
