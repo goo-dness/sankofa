@@ -1,0 +1,2 @@
+[console_scripts]
+pygount = pygount.command:main
