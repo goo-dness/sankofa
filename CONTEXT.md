@@ -269,26 +269,77 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
-### 2026-08-09 — Gemini removed from pseudocode role; Claude generates pseudocode directly
 
-**Decided:** Standing workflow updated (see §11) — Claude now writes all
-pseudocode directly in chat. Gemini (in Zed) is no longer used to
-generate pseudocode from Claude-written prompts. Rest of the working
-method is unchanged: developer still hand-types every real line of code
-himself, runs all commands himself, and brings errors back to Claude to
-debug together.
+### 2026-08-09 — `expressed_by` (protein→organism) bridge relationship confirmed and named; `treats + treats → treats` rule ruled out
 
-**Why:** Removes a translation hop (Claude writes a prompt → Gemini
-generates pseudocode) that added a step without adding value, now that
-Claude produces pseudocode reliably in the established ALL CAPS /
-`//` / FUNCTION-END FUNCTION style directly.
+**Decided:** The originally planned first Layer 2 inference rule
+(`inhibits + causes → treats`, locked 2026-07-21) was tested against
+live data via SQL and confirmed to produce zero composable entity
+pairs — ChEMBL's protein/enzyme target entities and the `CausalAgent`
+(pathogen/organism) entities from `causes` share no entity in common,
+because no relationship currently bridges a protein target to the
+organism that expresses it.
 
-**Rules out:** Routing pseudocode generation through Gemini for any
-future session, including the "longer-token pseudocode generation"
-case Gemini was previously kept around for.
+A substitute rule was considered and explicitly rejected:
+`treats + treats → treats` (deriving a new `treats` fact by chaining
+two existing `treats` facts via `derived_from`). This does not fill
+the missing hop — it manufactures a "new" derived fact out of
+relationships that already independently exist, which is exactly the
+confidence-laundering pattern the `TIER_SCORE`/hard-tier-cap design
+(2026-07-21) was built to prevent. Two independently-sourced `treats`
+facts about a disease do not imply a third, novel `treats` fact.
 
-**Unblocks:** One fewer context-switch per pseudocode request going
-forward.
+**Fix (confirmed, not yet built):** add a real `expressed_by`
+relationship (protein → organism) using organism data ChEMBL's
+`/target` endpoint already returns — confirmed via the ChEMBL schema
+docs (https://www.ebi.ac.uk/chembl/api/data/target/schema): `/target`
+carries an `organism` field directly on the target record
+(species-level, e.g. `"Plasmodium falciparum"`); `/target_component`
+goes one level deeper with per-component `organism` + `tax_id`, for
+the rarer multi-component (protein complex/family) case. Since
+`chembl.py` already calls `/target` for mechanism data, this is a
+widening of the existing target-fetch step, not a new data source —
+stays inside the "no new sources after ChEMBL" lock (§4).
+
+This produces a real 3-hop derived chain instead of the broken 2-hop
+one:
+```
+molecule --inhibits--> protein --expressed_by--> organism --causes--> disease
+```
+Every premise is independently sourced and load-bearing; the existing
+depth/decay math (`MAX_DEPTH`, `DECAY = 0.75`, min-of-premises
+tiering) still applies unchanged.
+
+**Relationship name — `expressed_by` chosen over `belongs_to`:**
+`belongs_to` reads taxonomic/categorical (species membership);
+`expressed_by` is the standard biological framing for "this
+protein/gene product originates from this organism's genome," matches
+how ChEMBL itself talks about targets, and reads correctly as a
+mechanistic step in the chain above.
+
+**Why:** Routing around a structural gap with a substitute inference
+rule was rejected as confidence laundering — same principle as the
+hard tier cap. The correct fix is adding the real missing data
+connection, not inventing a rule that avoids needing it.
+
+**Rules out:** `treats + treats → treats` (or any rule deriving
+`treats` by chaining existing `treats` facts against themselves) as a
+Layer 2 composition rule, permanently. `belongs_to` as the bridge
+relationship name.
+
+**Not yet done:**
+- Seed `expressed_by` into `relationship_types`
+- Widen `chembl.py` extract/transform/load to capture the `organism`
+  field off the existing target fetch and write the new relationship
+- Verify exact shape of the `organism` field via a real `curl` on a
+  malaria/anemia-slice target ID (since `SINGLE PROTEIN`,
+  `PROTEIN COMPLEX`, and `PROTEIN FAMILY` target types may return
+  differently) before pseudocoding
+- Re-scope `rules.py`'s first composition rule around the 3-hop chain
+  above instead of the original 2-hop `inhibits + causes` pairing
+
+**Unblocks:** ChEMBL extract/transform pseudocode can proceed once the
+real `organism` field shape is confirmed via curl.
 
 ### 2026-08-01 — ChEMBL max_phase_for_ind key typo fixed (confidence tiering was silently broken)
 

@@ -14,7 +14,10 @@ from ingestions.openalex import (
     TREATMENT_VOCABULARY,
     determine_entity_type,
     CAUSAL_AGENT_VOCABULARY,
-    CAUSAL_AGENT_ENTITY_TYPE
+    CAUSAL_AGENT_ENTITY_TYPE,
+    ORGANISM_NAME_MAP,
+    normalize_organism_name,
+    filter_redundant_causal_agent_matches
 )
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
@@ -551,10 +554,12 @@ def transform(raw_records, disease_name):
             for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
                 if causal_agent_term in concatenated_abstract_string_lower:
                     found_causal_agents.append(causal_agent_term)
+            found_causal_agents = filter_redundant_causal_agent_matches(found_causal_agents)
 
             for actual_causal_agent in found_causal_agents:
+                canonical_name = normalize_organism_name(actual_causal_agent)
                 causal_agent_entity_dict = {}
-                causal_agent_entity_dict["name"] = actual_causal_agent
+                causal_agent_entity_dict["name"] = canonical_name
                 causal_agent_entity_dict["domain"] = "healthcare"
                 causal_agent_entity_dict["entity_type"] = CAUSAL_AGENT_ENTITY_TYPE
                 causal_agent_entity_dict["region"] = region_name
@@ -564,7 +569,7 @@ def transform(raw_records, disease_name):
                 entities.append(causal_agent_entity_dict)
 
                 causal_agent_source_dict = {}
-                causal_agent_source_dict["entity_name"] = actual_causal_agent
+                causal_agent_source_dict["entity_name"] = canonical_name
                 causal_agent_source_dict["domain"] = "healthcare"
                 causal_agent_source_dict["source_name"] = "PubMed"
                 causal_agent_source_dict["source_url"] = paper_source_url
@@ -575,7 +580,7 @@ def transform(raw_records, disease_name):
                 sources.append(causal_agent_source_dict)
 
                 causes_relationship_dict = {}
-                causes_relationship_dict["from_entity_name"] = actual_causal_agent
+                causes_relationship_dict["from_entity_name"] = canonical_name
                 causes_relationship_dict["from_entity_domain"] = "healthcare"
                 causes_relationship_dict["to_entity_name"] = disease_name
                 causes_relationship_dict["to_entity_domain"] = "healthcare"

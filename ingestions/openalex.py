@@ -305,7 +305,36 @@ INDIGENOUS_KEYWORDS = [
     "folk medicine",
     "plant extract",
 ]
+ORGANISM_NAME_MAP = {
+    "m. tuberculosis": "mycobacterium tuberculosis",
+    "v. cholerae": "vibrio cholerae",
+    "s. typhi": "salmonella typhi",
+    "hib": "haemophilus influenzae type b",
+    "pneumococcus": "streptococcus pneumoniae",
+    "meningococcus": "neisseria meningitidis",
+    "enterotoxigenic e. coli": "escherichia coli",
+    "group b streptococcus": "streptococcus agalactiae",
+    "tubercle bacillus": "mycobacterium tuberculosis",
+}
 
+def normalize_organism_name(raw_name: str) -> str:
+    lowered = raw_name.lower().strip()
+    return ORGANISM_NAME_MAP.get(lowered, lowered)
+
+def filter_redundant_causal_agent_matches(found_terms: list[str]) -> list[str]:
+    """
+    Drops any match term that is a substring of another matched term foun in the same text --- e.g. if both "mycobaterium" and "mycobaterium tuberculosis" matched the same abstract, only the more specific species-level term survivies. Same principle as the length-sorted African country name fix already applied in pubmed.py
+    """
+    filtered = []
+    for term in found_terms:
+        is_substring_of_another = False
+        for other_term in found_terms:
+            if term != other_term and term in other_term:
+                is_substring_of_another = True
+                break
+        if not is_substring_of_another:
+            filtered.append(term)
+    return filtered
 
 # Openalex stores abstracts as word-to-positions mapping, I rebuild the original sentence from that mapping
 def reconstruct_abstract(abstract_inverted_index: Dict[str, dict]) -> str:
@@ -557,10 +586,12 @@ def transform(
             for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
                 if causal_agent_term in abstract_text_lower:
                     found_causal_agents.append(causal_agent_term)
+            found_causal_agents = filter_redundant_causal_agent_matches(found_causal_agents)
 
             for actual_causal_agent in found_causal_agents:
+                canonical_name = normalize_organism_name(actual_causal_agent)
                 causal_agent_entity_dict = {}
-                causal_agent_entity_dict["name"] = actual_causal_agent
+                causal_agent_entity_dict["name"] = canonical_name
                 causal_agent_entity_dict["domain"] = "healthcare"
                 causal_agent_entity_dict["entity_type"] = CAUSAL_AGENT_ENTITY_TYPE
                 causal_agent_entity_dict["region"] = region
@@ -570,7 +601,7 @@ def transform(
                 entities.append(causal_agent_entity_dict)
 
                 causal_agent_source_dict = {}
-                causal_agent_source_dict["entity_name"] = actual_causal_agent
+                causal_agent_source_dict["entity_name"] = canonical_name
                 causal_agent_source_dict["domain"] = "healthcare"
                 causal_agent_source_dict["source_name"] = "OpenAlex"
                 causal_agent_source_dict["source_url"] = paper.get("doi") if paper.get("doi") else paper.get("id")
@@ -579,7 +610,7 @@ def transform(
                 sources.append(causal_agent_source_dict)
 
                 causes_relationship_dict = {}
-                causes_relationship_dict["from_entity_name"] = actual_causal_agent
+                causes_relationship_dict["from_entity_name"] = canonical_name
                 causes_relationship_dict["from_entity_domain"] = "healthcare"
                 causes_relationship_dict["to_entity_name"] = disease_name
                 causes_relationship_dict["to_entity_domain"] = "healthcare"
