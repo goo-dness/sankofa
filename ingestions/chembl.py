@@ -152,9 +152,9 @@ def extract(disease_name):
             print(f"API failed after retries for molecule {molecule_chembl_id}")
             extract_succeeded = False
         else:
-            JSON_DATA = response.json()
-            if response.status_code == 200 and JSON_DATA.get('molecule_chembl_id') is not None:
-                raw_molecules_data.append(JSON_DATA)
+            json_data = response.json()
+            if response.status_code == 200 and json_data.get('molecule_chembl_id') is not None:
+                raw_molecules_data.append(json_data)
             else:
                 print(f"Error or no molecule details found for {molecule_chembl_id}")
                 extract_succeeded = False
@@ -175,12 +175,12 @@ def extract(disease_name):
             extract_succeeded = False
         else:
             try:
-                JSON_DATA = response.json()
+                json_data = response.json()
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON for mecahnism {molecule_chembl_id}: {e}. Response: {response.text[:200]}...")
-                JSON_DATA = {}
+                json_data = {}
 
-            mechanisms = JSON_DATA.get('mechanisms')
+            mechanisms = json_data.get('mechanisms')
             if response.status_code == 200 and mechanisms is not None:
                 for mechanism_record in mechanisms:
                     raw_mechanisms_data.append(mechanism_record)
@@ -209,12 +209,12 @@ def extract(disease_name):
             extract_succeeded = False
         else:
             try:
-                JSON_DATA = response.json()
+                json_data = response.json()
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON for target {target_chembl_id}: {e}. Response: {response.text[:200]}...")
-                JSON_DATA = {}
-            if response.status_code == 200 and JSON_DATA.get('target_chembl_id') is not None:
-                raw_targets_data.append(JSON_DATA)
+                json_data = {}
+            if response.status_code == 200 and json_data.get('target_chembl_id') is not None:
+                raw_targets_data.append(json_data)
             else:
                 print(f"Error or no target details found for {target_chembl_id}")
                 extract_succeeded = False
@@ -626,8 +626,8 @@ def load(entities, relationships, sources, db_session: Session):
 
                 entity = db_session.query(Entity).filter_by(id=entity_id).first()
                 if entity:
-                    entity.evidence_count += 1 # type: ignore[assignment]
-                print(f"Added new source for entity {entity_name} ({domain}): {source_dict['source_url']}")
+                    entity.evidence_count = (entity.evidence_count or 0) + 1
+                    print(f"Added new source for entity {entity_name} ({domain}): {source_dict['source_url']}")
             else:
                 print(f"Skipping duplicate source for entity {entity_name} ({domain}): {source_dict['source_url']}")
         db_session.commit()
@@ -676,7 +676,7 @@ def load(entities, relationships, sources, db_session: Session):
                     .first()
                 )
                 if not existing_rel_source:
-                    existing_entity_relations.evidence_count += 1 # type: ignore[assignment]
+                    existing_entity_relations.evidence_count = (existing_entity_relations.evidence_count or 0) + 1
                     existing_entity_relations.confidence = max(confidence, existing_entity_relations.confidence)
 
                     new_rel_source = RelationshipSource(
