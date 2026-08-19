@@ -372,4 +372,10 @@ relationship_types_data = [
         "domain": "general",
         "description": "Indicates that an entity (e.g., a statistic) quantifies or measures another entity(e.g, a disease, a phenomon)",
     },
+    {
+        "name": "expressed_by",
+        "label": "Express By",
+        "domain": "molecular",
+        "description": "A protein or other biological entity is expressed by an organism"
+    }
 ]
