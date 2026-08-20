@@ -11,7 +11,7 @@ from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
 from typing import List, Dict, Any, Tuple
-from ingestions.openalex import DISEASE_VOCABULARY, TREATMENT_VOCABULARY
+from ingestions.openalex import DISEASE_VOCABULARY, TREATMENT_VOCABULARY, CAUSAL_AGENT_ENTITY_TYPE
 CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/"
 DRUG_INDICATION_CAP_PER_DISEASE = 1000
 MECHANISM_CAP_PER_MOLECULE = 50
@@ -253,6 +253,7 @@ def transform(raw_data, disease_name):
     added_target_ids = set()
     molecule_id_to_pref_name = {}
     target_id_to_pref_name = {}
+    target_id_to_organism = {}
 
     # --- Lookup maps for display names ---
     for mol_record in raw_data.get("molecules", []):
@@ -264,6 +265,15 @@ def transform(raw_data, disease_name):
         target_id = target_record.get("target_chembl_id")
         if target_id is not None:
             target_id_to_pref_name[target_id] = target_record.get("pref_name") or target_id
+            target_record["organism_name"] = target_record.get("organism")
+            target_record["organism_id"] = target_record.get("organism_id")
+    for tr in raw_data.get("targets", []):
+        tid = tr.get("target_chembl_id")
+        if tid:
+            target_id_to_organism[tid] = {
+                "organism_name": tr.get("organism"),
+                "organism_id": tr.get("organism_id")
+            }
 
     # --- Disease entity: must be emitted every run, even though WHO/OpenAlex/PubMed
     # likely already created it, so load()'s Stage 2 upsert resolves its ID into the
@@ -438,6 +448,9 @@ def transform(raw_data, disease_name):
             mol_id = mechanism_record.get("molecule_chembl_id")
             target_id = mechanism_record.get("target_chembl_id")
             action_type = mechanism_record.get("action_type")
+            organism_info = target_id_to_organism.get(target_id, {})
+            organism_name = organism_info.get("organism_name")
+            organism_id = organism_info.get("organism_id")
 
             if mol_id is None or target_id is None:
                 continue
@@ -461,6 +474,37 @@ def transform(raw_data, disease_name):
                     "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                 })
                 added_target_ids.add(target_id)
+
+                organism_name = target_record.get("organism_name")
+                organism_id = target_record.get("organism_id")
+                if organism_name:
+                    entities.append({
+                        "name": organism_name,
+                        "domain": DISEASE_VOCABULARY,
+                        "entity_type": CAUSAL_AGENT_ENTITY_TYPE,
+                        "expression": organism_id or organism_name,
+                        "confidence": 3,
+                        "contributor": "ChEMBL",
+                    })
+                    sources.append({
+                        "entity_name": organism_name,
+                        "domain": DISEASE_DOMAIN,
+                        "source_name": "ChEMBL",
+                        "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
+                    })
+                    relationships.append({
+                        "from_entity_name": target_display_name,
+                        "from_entity_domain": DISEASE_DOMAIN,
+                        "to_entity_name": organism_name,
+                        "to_entity_domain": DISEASE_DOMAIN,
+                        "relationship": "expressed_by",
+                        "relationship_type_label": "Expressed By",
+                        "relationship_type_domain": "CausalAgent",
+                        "confidence": 3,
+                        "context": None,
+                        "source_name": "ChEMBL",
+                        "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json"
+                    })
 
             targets_label, targets_domain = "Targets", "pharmacology"  # from relationship_types.py
             relationships.append({
