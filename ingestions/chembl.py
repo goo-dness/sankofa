@@ -12,10 +12,13 @@ from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
 from typing import List, Dict, Any, Tuple
 from ingestions.openalex import DISEASE_VOCABULARY, TREATMENT_VOCABULARY, CAUSAL_AGENT_ENTITY_TYPE
-CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/"
+from app.database import get_db
+from data.seed import record_coverage
+
+CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/`"
 DRUG_INDICATION_CAP_PER_DISEASE = 1000
 MECHANISM_CAP_PER_MOLECULE = 50
-DISEASE_DOMAIN = "healthcare"
+
 MESH_DISEASE_MAP = {
     "malaria": ["D008288", "D016778"],
     "HIV": ["D015658"],
@@ -53,11 +56,12 @@ MESH_DISEASE_MAP = {
     "marburg virus": ["D008379"],
     "rift valley fever": []
 }
-#New entity type for ChEMBL compounds
+# New entity type for ChEMBL compounds
 MOLECULE_ENTITY_TYPE = "Molecule"
-#Reused entity type for ChEMBLE targets (proteins/enzymes)
+# Reused entity type for ChEMBL targets (proteins/enzymes)
 BIOLOGICAL_ENTITY_TYPE = "Biological"
-#Stage 1: extract(disease_name)
+
+# Stage 1: extract(disease_name)
 # Fetches raw data from ChEMBL for a given disease
 def extract(disease_name):
     raw_drug_indications_data = []
@@ -66,7 +70,7 @@ def extract(disease_name):
     raw_targets_data = []
     extract_succeeded = True
 
-    #1a: look up the mesh_id(s) for the diease
+    # 1a: look up the mesh_id(s) for the disease
     mesh_ids = MESH_DISEASE_MAP.get(disease_name)
     if mesh_ids is None or len(mesh_ids) == 0:
         print(f"Skipping {disease_name}.No mesh_id found in MESH_DISEASE_MAP")
@@ -77,7 +81,7 @@ def extract(disease_name):
             "targets": raw_targets_data
         }
 
-    #1b: Query /drug_indication filtered by mesh_id, paginated and capped
+    # 1b: Query /drug_indication filtered by mesh_id, paginated and capped
     for mesh_id in mesh_ids:
         current_page_url = f"{CHEMBL_BASE_URL}drug_indication.json?mesh_id={mesh_id}"
         indications_count_for_mesh_id = 0
@@ -85,7 +89,8 @@ def extract(disease_name):
         while current_page_url is not None and indications_count_for_mesh_id < DRUG_INDICATION_CAP_PER_DISEASE:
             print(f"Fetching drug_indication for {disease_name} (mesh_id: {mesh_id}) from {current_page_url}")
             try:
-                response = get_with_retry(current_page_url, params=None, timeout=30.0, context_label=f"ChEMBL drug_indication for {disease_name}")
+                response = get_with_retry(current_page_url, params=None, timeout=30.0,
+                                          context_label=f"ChEMBL drug_indication for {disease_name}")
             except requests.exceptions.RequestException as e:
                 print(f"Error making API request for {disease_name} (mesh_id: {mesh_id}, URL: {current_page_url}): {e}")
                 current_page_url = None
@@ -99,14 +104,15 @@ def extract(disease_name):
             try:
                 JSON_DATA = response.json()
             except json.JSONDecodeError as e:
-                print(f"Error decoding json for {disease_name} (mesh_id: {mesh_id}, URL: {current_page_url}): {e}. Response: {response.text[:200]}...")
+                print(f"Error decoding json for {disease_name} (mesh_id: {mesh_id}, URL: {current_page_url}): {e}. "
+                      f"Response: {response.text[:200]}...")
                 current_page_url = None
                 extract_succeeded = False
                 break
 
             if response.status_code != 200 or JSON_DATA.get('drug_indications') is None:
                 print(f"Error or no drug_indications found for {disease_name} (mesh_id: {mesh_id}) on page {current_page_url}")
-                current_page_url = None # Stop pagination
+                current_page_url = None  # Stop pagination
                 extract_succeeded = False
                 break
             for indication_record in JSON_DATA.get('drug_indications'):
@@ -115,11 +121,11 @@ def extract(disease_name):
                 if indications_count_for_mesh_id >= DRUG_INDICATION_CAP_PER_DISEASE:
                     break
 
-            current_page_url = resolve_next_url(JSON_DATA.get('page_meta', {}).get('next')) # Get next page url
+            current_page_url = resolve_next_url(JSON_DATA.get('page_meta', {}).get('next'))  # Get next page url
             if indications_count_for_mesh_id >= DRUG_INDICATION_CAP_PER_DISEASE:
                 break
 
-            time.sleep(0.1)
+        time.sleep(0.1)
 
     # Identify all unique molecule_chembl_ids from drug_indications
     # FIX 1: parent molecules never get their pref_name fetched (extract())
@@ -143,7 +149,8 @@ def extract(disease_name):
         molecule_url = f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json"
         print(f"Fetching molecule details for {molecule_chembl_id}")
         try:
-            response = get_with_retry(molecule_url, params=None, timeout=30.0, context_label=f"ChEMBL molecule details for {molecule_chembl_id}")
+            response = get_with_retry(molecule_url, params=None, timeout=30.0,
+                                      context_label=f"ChEMBL molecule details for {molecule_chembl_id}")
         except requests.exceptions.RequestException as e:
             print(f"Error making API request for {molecule_chembl_id}: {e}")
             response = None
@@ -159,13 +166,13 @@ def extract(disease_name):
                 print(f"Error or no molecule details found for {molecule_chembl_id}")
                 extract_succeeded = False
 
-
         # Query /mechanism?molecule_chembl_id=<id>, capped at N per molecule
-        mechanism_url =f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={molecule_chembl_id}"
+        mechanism_url = f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={molecule_chembl_id}"
         print(f"Fetching mechanisms for {molecule_chembl_id}")
         full_mechanism_url = f"{mechanism_url}&limit={MECHANISM_CAP_PER_MOLECULE}"
         try:
-            response = get_with_retry(full_mechanism_url, params=None, timeout=30.0, context_label=f"ChEMBL mechanism for molecule {molecule_chembl_id}")
+            response = get_with_retry(full_mechanism_url, params=None, timeout=30.0,
+                                      context_label=f"ChEMBL mechanism for molecule {molecule_chembl_id}")
         except requests.exceptions.RequestException as e:
             print(f"Error making API request for mechanism {molecule_chembl_id}: {e}")
             response = None
@@ -177,7 +184,8 @@ def extract(disease_name):
             try:
                 json_data = response.json()
             except json.JSONDecodeError as e:
-                print(f"Error decoding JSON for mecahnism {molecule_chembl_id}: {e}. Response: {response.text[:200]}...")
+                print(f"Error decoding JSON for mechanism {molecule_chembl_id}: {e}. "
+                      f"Response: {response.text[:200]}...")
                 json_data = {}
 
             mechanisms = json_data.get('mechanisms')
@@ -199,7 +207,8 @@ def extract(disease_name):
         target_url = f"{CHEMBL_BASE_URL}target/{target_chembl_id}.json"
         print(f"Fetching target details for {target_chembl_id}")
         try:
-            response = get_with_retry(target_url, params=None, timeout=30.0, context_label=f"ChEMBL target for molecule {target_chembl_id}")
+            response = get_with_retry(target_url, params=None, timeout=30.0,
+                                    context_label=f"ChEMBL target for molecule {target_chembl_id}")
         except requests.exceptions.RequestException as e:
             print(f"Error making API request for target {target_chembl_id}: {e}")
             response = None
@@ -211,7 +220,8 @@ def extract(disease_name):
             try:
                 json_data = response.json()
             except json.JSONDecodeError as e:
-                print(f"Error decoding JSON for target {target_chembl_id}: {e}. Response: {response.text[:200]}...")
+                print(f"Error decoding JSON for target {target_chembl_id}: {e}. "
+                      f"Response: {response.text[:200]}...")
                 json_data = {}
             if response.status_code == 200 and json_data.get('target_chembl_id') is not None:
                 raw_targets_data.append(json_data)
@@ -221,7 +231,7 @@ def extract(disease_name):
 
         time.sleep(0.1)
 
-    return{
+    return {
         "indications": raw_drug_indications_data,
         "molecules": raw_molecules_data,
         "mechanisms": raw_mechanisms_data,
@@ -231,18 +241,6 @@ def extract(disease_name):
 
 # Stage 2: transform(raw_data, disease_name)
 # Converts raw ChEMBL data into Sankofa entity and relationship dicts
-
-
-# NOTE: no RELATIONSHIP_TYPE_INFO here. All five ChEMBL relationship types
-# (treats, derived_from, targets, inhibits, binds_to) are already seeded in
-# relationship_types via data/relationship_types.py - load()'s GET_OR_CREATE
-# will find them by name and never hit the create-branch that needs label/domain.
-# relationship_type_label/relationship_type_domain are still attached to each
-# relationship_dict below as a defensive fallback (only used if load() ever
-# encounters a genuinely new, unseeded type), but the values aren't duplicated
-# from the seed file here - keeping data/relationship_types.py the single
-# source of truth.
-
 
 def transform(raw_data, disease_name):
     entities = []
@@ -261,30 +259,20 @@ def transform(raw_data, disease_name):
         if mol_id is not None:
             molecule_id_to_pref_name[mol_id] = mol_record.get("pref_name") or mol_id
 
+    # Build lookup maps for targets (single pass to avoid leaking variables)
     for target_record in raw_data.get("targets", []):
         target_id = target_record.get("target_chembl_id")
         if target_id is not None:
             target_id_to_pref_name[target_id] = target_record.get("pref_name") or target_id
-            target_record["organism_name"] = target_record.get("organism")
-            target_record["organism_id"] = target_record.get("organism_id")
-    for tr in raw_data.get("targets", []):
-        tid = tr.get("target_chembl_id")
-        if tid:
-            target_id_to_organism[tid] = {
-                "organism_name": tr.get("organism"),
-                "organism_id": tr.get("organism_id")
+            target_id_to_organism[target_id] = {
+                "organism_name": target_record.get("organism"),
+                "organism_id": target_record.get("organism_id"),
             }
 
-    # --- Disease entity: must be emitted every run, even though WHO/OpenAlex/PubMed
-    # likely already created it, so load()'s Stage 2 upsert resolves its ID into the
-    # entity_name_domain_to_id map for this run. Without this, every "treats"
-    # relationship's to_entity lookup fails silently.
-    # entity_type/confidence here only matter if this is genuinely the first pipeline
-    # to create this disease - defaulting to "Clinical" / confidence 1 as a
-    # placeholder since entity_type isn't part of the dedup key. Worth confirming.
+    # --- Disease entity (always present) ---
     disease_entity_dict = {
         "name": disease_name,
-        "domain": DISEASE_DOMAIN,
+        "domain": "healthcare",                     # <-- changed
         "entity_type": "Clinical",
         "confidence": 1,
         "contributor": "ChEMBL",
@@ -292,7 +280,7 @@ def transform(raw_data, disease_name):
     entities.append(disease_entity_dict)
     sources.append({
         "entity_name": disease_name,
-        "domain": DISEASE_DOMAIN,
+        "domain": "healthcare",                     # <-- changed
         "source_name": "ChEMBL",
         "source_url": f"{CHEMBL_BASE_URL}drug_indication.json",
     })
@@ -306,10 +294,7 @@ def transform(raw_data, disease_name):
                 continue
 
             max_phase_raw = indication_record.get("max_phase_for_ind")
-            if max_phase_raw is None:
-                max_phase_float = -1.0
-            else:
-                max_phase_float = float(max_phase_raw)
+            max_phase_float = -1.0 if max_phase_raw is None else float(max_phase_raw)
             parent_molecule_chembl_id = indication_record.get("parent_molecule_chembl_id")
             current_indication_refs = indication_record.get("indication_refs", [])
 
@@ -337,17 +322,15 @@ def transform(raw_data, disease_name):
             if molecule_chembl_id not in added_molecule_ids:
                 entities.append({
                     "name": molecule_display_name,
-                    "domain": DISEASE_DOMAIN,
+                    "domain": "healthcare",               # <-- changed
                     "entity_type": MOLECULE_ENTITY_TYPE,
                     "expression": molecule_chembl_id,
-                    "confidence": 2,  # placeholder - ChEMBL has no per-entity confidence
-                                      # signal the way OpenAlex citations or PubMed pub-types
-                                      # do; worth revisiting
+                    "confidence": 2,
                     "contributor": "ChEMBL",
                 })
                 sources.append({
                     "entity_name": molecule_display_name,
-                    "domain": DISEASE_DOMAIN,
+                    "domain": "healthcare",               # <-- changed
                     "source_name": "ChEMBL",
                     "source_url": f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json",
                 })
@@ -360,14 +343,12 @@ def transform(raw_data, disease_name):
             elif 1.0 <= max_phase_value <= 3.0:
                 treats_confidence = 2
             else:
-                treats_confidence = 1  # covers -1.0 (unknown) and 0.5 (fractional)
+                treats_confidence = 1
 
-            rel_label, rel_domain = "Treats", "pharmacology"  # from relationship_types.py
+            rel_label, rel_domain = "Treats", "pharmacology"
             refs = deduped_info.get("indication_refs", [])
 
             if refs:
-                # One relationship_dict per source ref - matches the established
-                # one-dict-per-source-instance pattern from openalex.py/pubmed.py
                 for ref in refs:
                     ref_url = ref.get("ref_url")
                     if ref_url is None:
@@ -375,9 +356,9 @@ def transform(raw_data, disease_name):
 
                     relationships.append({
                         "from_entity_name": molecule_display_name,
-                        "from_entity_domain": DISEASE_DOMAIN,
+                        "from_entity_domain": "healthcare",          # <-- changed
                         "to_entity_name": current_disease_name,
-                        "to_entity_domain": DISEASE_DOMAIN,
+                        "to_entity_domain": "healthcare",            # <-- changed
                         "relationship": "treats",
                         "relationship_type_label": rel_label,
                         "relationship_type_domain": rel_domain,
@@ -387,13 +368,11 @@ def transform(raw_data, disease_name):
                         "source_url": ref_url,
                     })
             else:
-                # No refs available - fall back to a ChEMBL-page source so the
-                # relationship still has provenance
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": DISEASE_DOMAIN,
+                    "from_entity_domain": "healthcare",              # <-- changed
                     "to_entity_name": current_disease_name,
-                    "to_entity_domain": DISEASE_DOMAIN,
+                    "to_entity_domain": "healthcare",                # <-- changed
                     "relationship": "treats",
                     "relationship_type_label": rel_label,
                     "relationship_type_domain": rel_domain,
@@ -410,7 +389,7 @@ def transform(raw_data, disease_name):
                     parent_display_name = molecule_id_to_pref_name.get(parent_mol_id, parent_mol_id)
                     entities.append({
                         "name": parent_display_name,
-                        "domain": DISEASE_DOMAIN,
+                        "domain": "healthcare",                 # <-- changed
                         "entity_type": MOLECULE_ENTITY_TYPE,
                         "expression": parent_mol_id,
                         "confidence": 2,
@@ -418,18 +397,18 @@ def transform(raw_data, disease_name):
                     })
                     sources.append({
                         "entity_name": parent_display_name,
-                        "domain": DISEASE_DOMAIN,
+                        "domain": "healthcare",                 # <-- changed
                         "source_name": "ChEMBL",
                         "source_url": f"{CHEMBL_BASE_URL}molecule/{parent_mol_id}.json",
                     })
                     added_molecule_ids.add(parent_mol_id)
 
-                derived_label, derived_domain = "Derived From", "pharmacology"  # from relationship_types.py
+                derived_label, derived_domain = "Derived From", "pharmacology"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": DISEASE_DOMAIN,
+                    "from_entity_domain": "healthcare",          # <-- changed
                     "to_entity_name": molecule_id_to_pref_name.get(parent_mol_id, parent_mol_id),
-                    "to_entity_domain": DISEASE_DOMAIN,
+                    "to_entity_domain": "healthcare",            # <-- changed
                     "relationship": "derived_from",
                     "relationship_type_label": derived_label,
                     "relationship_type_domain": derived_domain,
@@ -442,18 +421,19 @@ def transform(raw_data, disease_name):
             print(f"Error building entities/relationships from deduped indications: {error}")
             continue
 
-    # --- Mechanisms: targets, inhibits, binds_to ---
+    # --- Mechanisms: targets, inhibits, binds_to, expressed_by ---
     for mechanism_record in raw_data.get("mechanisms", []):
         try:
             mol_id = mechanism_record.get("molecule_chembl_id")
             target_id = mechanism_record.get("target_chembl_id")
             action_type = mechanism_record.get("action_type")
-            organism_info = target_id_to_organism.get(target_id, {})
-            organism_name = organism_info.get("organism_name")
-            organism_id = organism_info.get("organism_id")
 
             if mol_id is None or target_id is None:
                 continue
+
+            organism_info = target_id_to_organism.get(target_id, {})
+            organism_name = organism_info.get("organism_name")
+            organism_id = organism_info.get("organism_id")
 
             molecule_display_name = molecule_id_to_pref_name.get(mol_id, mol_id)
             target_display_name = target_id_to_pref_name.get(target_id, target_id)
@@ -461,7 +441,7 @@ def transform(raw_data, disease_name):
             if target_id not in added_target_ids:
                 entities.append({
                     "name": target_display_name,
-                    "domain": DISEASE_DOMAIN,
+                    "domain": "healthcare",                 # <-- changed
                     "entity_type": BIOLOGICAL_ENTITY_TYPE,
                     "expression": target_id,
                     "confidence": 2,
@@ -469,18 +449,16 @@ def transform(raw_data, disease_name):
                 })
                 sources.append({
                     "entity_name": target_display_name,
-                    "domain": DISEASE_DOMAIN,
+                    "domain": "healthcare",                 # <-- changed
                     "source_name": "ChEMBL",
                     "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                 })
                 added_target_ids.add(target_id)
 
-                organism_name = target_record.get("organism_name")
-                organism_id = target_record.get("organism_id")
                 if organism_name:
                     entities.append({
                         "name": organism_name,
-                        "domain": DISEASE_VOCABULARY,
+                        "domain": "healthcare",                 # <-- changed
                         "entity_type": CAUSAL_AGENT_ENTITY_TYPE,
                         "expression": organism_id or organism_name,
                         "confidence": 3,
@@ -488,30 +466,30 @@ def transform(raw_data, disease_name):
                     })
                     sources.append({
                         "entity_name": organism_name,
-                        "domain": DISEASE_DOMAIN,
+                        "domain": "healthcare",                 # <-- changed
                         "source_name": "ChEMBL",
                         "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                     })
                     relationships.append({
                         "from_entity_name": target_display_name,
-                        "from_entity_domain": DISEASE_DOMAIN,
+                        "from_entity_domain": "healthcare",    # <-- changed
                         "to_entity_name": organism_name,
-                        "to_entity_domain": DISEASE_DOMAIN,
+                        "to_entity_domain": "healthcare",      # <-- changed
                         "relationship": "expressed_by",
                         "relationship_type_label": "Expressed By",
                         "relationship_type_domain": "CausalAgent",
                         "confidence": 3,
                         "context": None,
                         "source_name": "ChEMBL",
-                        "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json"
+                        "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                     })
 
-            targets_label, targets_domain = "Targets", "pharmacology"  # from relationship_types.py
+            targets_label, targets_domain = "Targets", "pharmacology"
             relationships.append({
                 "from_entity_name": molecule_display_name,
-                "from_entity_domain": DISEASE_DOMAIN,
+                "from_entity_domain": "healthcare",          # <-- changed
                 "to_entity_name": target_display_name,
-                "to_entity_domain": DISEASE_DOMAIN,
+                "to_entity_domain": "healthcare",            # <-- changed
                 "relationship": "targets",
                 "relationship_type_label": targets_label,
                 "relationship_type_domain": targets_domain,
@@ -522,12 +500,12 @@ def transform(raw_data, disease_name):
             })
 
             if action_type == "INHIBITOR":
-                inhibits_label, inhibits_domain = "Inhibits", "pharmacology"  # from relationship_types.py
+                inhibits_label, inhibits_domain = "Inhibits", "pharmacology"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": DISEASE_DOMAIN,
+                    "from_entity_domain": "healthcare",      # <-- changed
                     "to_entity_name": target_display_name,
-                    "to_entity_domain": DISEASE_DOMAIN,
+                    "to_entity_domain": "healthcare",        # <-- changed
                     "relationship": "inhibits",
                     "relationship_type_label": inhibits_label,
                     "relationship_type_domain": inhibits_domain,
@@ -537,12 +515,12 @@ def transform(raw_data, disease_name):
                     "source_url": f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={mol_id}",
                 })
             elif action_type in ["AGONIST", "ANTAGONIST", "ACTIVATOR", "BINDING AGENT", "MODULATOR"]:
-                binds_label, binds_domain = "Binds To", "molecular"  # from relationship_types.py
+                binds_label, binds_domain = "Binds To", "molecular"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": DISEASE_DOMAIN,
+                    "from_entity_domain": "healthcare",      # <-- changed
                     "to_entity_name": target_display_name,
-                    "to_entity_domain": DISEASE_DOMAIN,
+                    "to_entity_domain": "healthcare",        # <-- changed
                     "relationship": "binds_to",
                     "relationship_type_label": binds_label,
                     "relationship_type_domain": binds_domain,
@@ -556,7 +534,6 @@ def transform(raw_data, disease_name):
             continue
 
     return entities, relationships, sources
-
 
 def load(entities, relationships, sources, db_session: Session):
     entity_name_domain_to_id = {}
@@ -573,7 +550,6 @@ def load(entities, relationships, sources, db_session: Session):
 
         for rel_name in unique_relationship_type_names:
             if rel_name not in relationship_type_name_to_id:
-                # Find one relationship_dict carrying this type, to pull label/domain from
                 found_rel_info = None
                 for rd in relationships:
                     if rd["relationship"] == rel_name:
@@ -603,9 +579,6 @@ def load(entities, relationships, sources, db_session: Session):
         db_session.commit()
 
         # --- Step 2: Upsert entities ---
-        # Dedup key: normalized (lowercased, trimmed) name + domain — entity_type deliberately
-        # excluded, since the same disease/drug can carry different entity_type values across
-        # OpenAlex/PubMed/ChEMBL and including it would fragment evidence_count.
         for entity_dict in entities:
             entity_name = entity_dict["name"]
             domain = entity_dict["domain"]
@@ -774,14 +747,8 @@ def load(entities, relationships, sources, db_session: Session):
     finally:
         db_session.close()
 
-
-# extract, transform, load are expected to live in this same file
-# (ingestions/chembl.py) once combined - imported here only because this was
-# drafted as a separate file for review.
-# from ingestions.chembl import extract, transform, load
-
-
 def run_chembl_ingestion(disease_name):
+
     print(f"Starting ChEMBL ingestion for: {disease_name}")
 
     raw_data = extract(disease_name)
@@ -811,3 +778,18 @@ def run_chembl_ingestion(disease_name):
     touched_relationship_types = set(r["relationship"] for r in relationships)
     print(f"ChEMBL ingestion complete for: {disease_name}")
     return extract_succeeded, touched_relationship_types
+
+def run_chembl():
+    print("Starting ChEMBL ingestion pipeline...")
+    for disease_name in MESH_DISEASE_MAP:
+        extract_succeeded, touched_relationship_types = run_chembl_ingestion(disease_name)
+        if extract_succeeded:
+            with get_db() as db_session:
+                for rel_type in touched_relationship_types:
+                    record_coverage(db_session, "healthcare", disease_name, "ChEMBL", rel_type)
+        else:
+            print(f"SKipping coverage for {disease_name}-- no data reocrded")
+        print("ChEMBL ingestion complete.")
+
+if __name__ == "__main__":
+    run_chembl()
