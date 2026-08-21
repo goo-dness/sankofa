@@ -15,9 +15,11 @@ from ingestions.openalex import DISEASE_VOCABULARY, TREATMENT_VOCABULARY, CAUSAL
 from app.database import get_db
 from data.seed import record_coverage
 
-CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/`"
+CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/"
 DRUG_INDICATION_CAP_PER_DISEASE = 1000
 MECHANISM_CAP_PER_MOLECULE = 50
+BATCH_CHUNK_SIZE = 50  # confirmed via curl against real API; revisit if a
+                       # chunk of this size ever produces a slow/rejected request
 
 MESH_DISEASE_MAP = {
     "malaria": ["D008288", "D016778"],
@@ -60,6 +62,54 @@ MESH_DISEASE_MAP = {
 MOLECULE_ENTITY_TYPE = "Molecule"
 # Reused entity type for ChEMBL targets (proteins/enzymes)
 BIOLOGICAL_ENTITY_TYPE = "Biological"
+
+
+def chunk_ids(id_set, chunk_size):
+    """Split a set/iterable of ChEMBL IDs into fixed-size lists, dropping any
+    None values that shouldn't be sent to the API. Used to batch molecule/
+    target IDs into __in filter requests instead of one call per ID."""
+    ids_list = [i for i in id_set if i is not None]
+    for start in range(0, len(ids_list), chunk_size):
+        yield ids_list[start:start + chunk_size]
+
+
+def fetch_batch(endpoint, id_field_name, ids_chunk, response_key, context_label):
+    """Fetch one batch of records from a ChEMBL endpoint using the __in filter,
+    following pagination if a single chunk somehow returns more than one page.
+    Returns (records_list, succeeded_bool)."""
+    records = []
+    succeeded = True
+    ids_param = ",".join(ids_chunk)
+    current_url = f"{CHEMBL_BASE_URL}{endpoint}.json?{id_field_name}__in={ids_param}&limit=1000"
+
+    while current_url is not None:
+        print(f"Fetching {context_label} batch ({len(ids_chunk)} ids)")
+        try:
+            response = get_with_retry(current_url, params=None, timeout=30.0, context_label=context_label)
+        except requests.exceptions.RequestException as e:
+            print(f"Error making API request for {context_label} batch: {e}")
+            return records, False
+
+        if response is None:
+            print(f"API failed after retries for {context_label} batch")
+            return records, False
+
+        try:
+            json_data = response.json()
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON for {context_label} batch: {e}. Response: {response.text[:200]}...")
+            return records, False
+
+        if response.status_code != 200 or json_data.get(response_key) is None:
+            print(f"Error or no {response_key} found for {context_label} batch")
+            return records, False
+
+        records.extend(json_data.get(response_key))
+        current_url = resolve_next_url(json_data.get('page_meta', {}).get('next'))
+        time.sleep(0.2)
+
+    return records, succeeded
+
 
 # Stage 1: extract(disease_name)
 # Fetches raw data from ChEMBL for a given disease
@@ -125,10 +175,9 @@ def extract(disease_name):
             if indications_count_for_mesh_id >= DRUG_INDICATION_CAP_PER_DISEASE:
                 break
 
-        time.sleep(0.1)
+            time.sleep(0.1)
 
     # Identify all unique molecule_chembl_ids from drug_indications
-    # FIX 1: parent molecules never get their pref_name fetched (extract())
     # Ensure parent_molecule_chembl_id values are also included for fetching pref_name
     unique_molecule_chembl_ids = set()
     for record in raw_drug_indications_data:
@@ -137,99 +186,49 @@ def extract(disease_name):
         if parent_id is not None:
             unique_molecule_chembl_ids.add(parent_id)
 
-    # Identify all target_chembl_id from mechanism
+    # --- Molecules: batched via molecule_chembl_id__in instead of one call per molecule ---
+    for id_chunk in chunk_ids(unique_molecule_chembl_ids, BATCH_CHUNK_SIZE):
+        batch_records, batch_succeeded = fetch_batch(
+            endpoint="molecule",
+            id_field_name="molecule_chembl_id",
+            ids_chunk=id_chunk,
+            response_key="molecules",
+            context_label=f"ChEMBL molecule batch for {disease_name}",
+        )
+        raw_molecules_data.extend(batch_records)
+        if not batch_succeeded:
+            extract_succeeded = False
+
+    # --- Mechanisms: batched the same way, target IDs collected as we go ---
     unique_target_chembl_id = set()
-
-    # For each unique molecule_chembl_id, query /molecule and /mechanism
-    for molecule_chembl_id in unique_molecule_chembl_ids:
-        if molecule_chembl_id is None:
-            continue
-
-        # Query /molecule/<id> for pref_name
-        molecule_url = f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json"
-        print(f"Fetching molecule details for {molecule_chembl_id}")
-        try:
-            response = get_with_retry(molecule_url, params=None, timeout=30.0,
-                                      context_label=f"ChEMBL molecule details for {molecule_chembl_id}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error making API request for {molecule_chembl_id}: {e}")
-            response = None
-
-        if response is None:
-            print(f"API failed after retries for molecule {molecule_chembl_id}")
+    for id_chunk in chunk_ids(unique_molecule_chembl_ids, BATCH_CHUNK_SIZE):
+        batch_records, batch_succeeded = fetch_batch(
+            endpoint="mechanism",
+            id_field_name="molecule_chembl_id",
+            ids_chunk=id_chunk,
+            response_key="mechanisms",
+            context_label=f"ChEMBL mechanism batch for {disease_name}",
+        )
+        for mechanism_record in batch_records:
+            raw_mechanisms_data.append(mechanism_record)
+            target_id = mechanism_record.get('target_chembl_id')
+            if target_id is not None:
+                unique_target_chembl_id.add(target_id)
+        if not batch_succeeded:
             extract_succeeded = False
-        else:
-            json_data = response.json()
-            if response.status_code == 200 and json_data.get('molecule_chembl_id') is not None:
-                raw_molecules_data.append(json_data)
-            else:
-                print(f"Error or no molecule details found for {molecule_chembl_id}")
-                extract_succeeded = False
 
-        # Query /mechanism?molecule_chembl_id=<id>, capped at N per molecule
-        mechanism_url = f"{CHEMBL_BASE_URL}mechanism.json?molecule_chembl_id={molecule_chembl_id}"
-        print(f"Fetching mechanisms for {molecule_chembl_id}")
-        full_mechanism_url = f"{mechanism_url}&limit={MECHANISM_CAP_PER_MOLECULE}"
-        try:
-            response = get_with_retry(full_mechanism_url, params=None, timeout=30.0,
-                                      context_label=f"ChEMBL mechanism for molecule {molecule_chembl_id}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error making API request for mechanism {molecule_chembl_id}: {e}")
-            response = None
-
-        if response is None:
-            print(f"API failed after retries for mechanism {molecule_chembl_id}")
+    # --- Targets: batched via target_chembl_id__in ---
+    for id_chunk in chunk_ids(unique_target_chembl_id, BATCH_CHUNK_SIZE):
+        batch_records, batch_succeeded = fetch_batch(
+            endpoint="target",
+            id_field_name="target_chembl_id",
+            ids_chunk=id_chunk,
+            response_key="targets",
+            context_label=f"ChEMBL target batch for {disease_name}",
+        )
+        raw_targets_data.extend(batch_records)
+        if not batch_succeeded:
             extract_succeeded = False
-        else:
-            try:
-                json_data = response.json()
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON for mechanism {molecule_chembl_id}: {e}. "
-                      f"Response: {response.text[:200]}...")
-                json_data = {}
-
-            mechanisms = json_data.get('mechanisms')
-            if response.status_code == 200 and mechanisms is not None:
-                for mechanism_record in mechanisms:
-                    raw_mechanisms_data.append(mechanism_record)
-                    unique_target_chembl_id.add(mechanism_record.get('target_chembl_id'))
-            else:
-                print(f"Error or no mechanisms found for {molecule_chembl_id}")
-                extract_succeeded = False
-
-        time.sleep(0.1)
-
-    # Query /target/<target_chembl_id> for pref_name (target display name)
-    for target_chembl_id in unique_target_chembl_id:
-        if target_chembl_id is None:
-            continue
-
-        target_url = f"{CHEMBL_BASE_URL}target/{target_chembl_id}.json"
-        print(f"Fetching target details for {target_chembl_id}")
-        try:
-            response = get_with_retry(target_url, params=None, timeout=30.0,
-                                    context_label=f"ChEMBL target for molecule {target_chembl_id}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error making API request for target {target_chembl_id}: {e}")
-            response = None
-
-        if response is None:
-            print(f"API failed after retries for target {target_chembl_id}")
-            extract_succeeded = False
-        else:
-            try:
-                json_data = response.json()
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON for target {target_chembl_id}: {e}. "
-                      f"Response: {response.text[:200]}...")
-                json_data = {}
-            if response.status_code == 200 and json_data.get('target_chembl_id') is not None:
-                raw_targets_data.append(json_data)
-            else:
-                print(f"Error or no target details found for {target_chembl_id}")
-                extract_succeeded = False
-
-        time.sleep(0.1)
 
     return {
         "indications": raw_drug_indications_data,
@@ -266,13 +265,17 @@ def transform(raw_data, disease_name):
             target_id_to_pref_name[target_id] = target_record.get("pref_name") or target_id
             target_id_to_organism[target_id] = {
                 "organism_name": target_record.get("organism"),
-                "organism_id": target_record.get("organism_id"),
+                "organism_tax_id": target_record.get("tax_id"),  # was organism_id — that field
+                # doesn't exist in ChEMBL's real
+                # target response (confirmed via
+                # curl); tax_id is the real,
+                # NCBI-standard organism identifier
             }
 
     # --- Disease entity (always present) ---
     disease_entity_dict = {
         "name": disease_name,
-        "domain": "healthcare",                     # <-- changed
+        "domain": "healthcare",
         "entity_type": "Clinical",
         "confidence": 1,
         "contributor": "ChEMBL",
@@ -280,7 +283,7 @@ def transform(raw_data, disease_name):
     entities.append(disease_entity_dict)
     sources.append({
         "entity_name": disease_name,
-        "domain": "healthcare",                     # <-- changed
+        "domain": "healthcare",
         "source_name": "ChEMBL",
         "source_url": f"{CHEMBL_BASE_URL}drug_indication.json",
     })
@@ -322,7 +325,7 @@ def transform(raw_data, disease_name):
             if molecule_chembl_id not in added_molecule_ids:
                 entities.append({
                     "name": molecule_display_name,
-                    "domain": "healthcare",               # <-- changed
+                    "domain": "healthcare",
                     "entity_type": MOLECULE_ENTITY_TYPE,
                     "expression": molecule_chembl_id,
                     "confidence": 2,
@@ -330,13 +333,12 @@ def transform(raw_data, disease_name):
                 })
                 sources.append({
                     "entity_name": molecule_display_name,
-                    "domain": "healthcare",               # <-- changed
+                    "domain": "healthcare",
                     "source_name": "ChEMBL",
                     "source_url": f"{CHEMBL_BASE_URL}molecule/{molecule_chembl_id}.json",
                 })
                 added_molecule_ids.add(molecule_chembl_id)
 
-            # confidence tier from max_phase (clinical trial phase)
             max_phase_value = deduped_info.get("max_phase_for_ind")
             if max_phase_value == 4.0:
                 treats_confidence = 3
@@ -356,9 +358,9 @@ def transform(raw_data, disease_name):
 
                     relationships.append({
                         "from_entity_name": molecule_display_name,
-                        "from_entity_domain": "healthcare",          # <-- changed
+                        "from_entity_domain": "healthcare",
                         "to_entity_name": current_disease_name,
-                        "to_entity_domain": "healthcare",            # <-- changed
+                        "to_entity_domain": "healthcare",
                         "relationship": "treats",
                         "relationship_type_label": rel_label,
                         "relationship_type_domain": rel_domain,
@@ -370,9 +372,9 @@ def transform(raw_data, disease_name):
             else:
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": "healthcare",              # <-- changed
+                    "from_entity_domain": "healthcare",
                     "to_entity_name": current_disease_name,
-                    "to_entity_domain": "healthcare",                # <-- changed
+                    "to_entity_domain": "healthcare",
                     "relationship": "treats",
                     "relationship_type_label": rel_label,
                     "relationship_type_domain": rel_domain,
@@ -389,7 +391,7 @@ def transform(raw_data, disease_name):
                     parent_display_name = molecule_id_to_pref_name.get(parent_mol_id, parent_mol_id)
                     entities.append({
                         "name": parent_display_name,
-                        "domain": "healthcare",                 # <-- changed
+                        "domain": "healthcare",
                         "entity_type": MOLECULE_ENTITY_TYPE,
                         "expression": parent_mol_id,
                         "confidence": 2,
@@ -397,7 +399,7 @@ def transform(raw_data, disease_name):
                     })
                     sources.append({
                         "entity_name": parent_display_name,
-                        "domain": "healthcare",                 # <-- changed
+                        "domain": "healthcare",
                         "source_name": "ChEMBL",
                         "source_url": f"{CHEMBL_BASE_URL}molecule/{parent_mol_id}.json",
                     })
@@ -406,9 +408,9 @@ def transform(raw_data, disease_name):
                 derived_label, derived_domain = "Derived From", "pharmacology"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": "healthcare",          # <-- changed
+                    "from_entity_domain": "healthcare",
                     "to_entity_name": molecule_id_to_pref_name.get(parent_mol_id, parent_mol_id),
-                    "to_entity_domain": "healthcare",            # <-- changed
+                    "to_entity_domain": "healthcare",
                     "relationship": "derived_from",
                     "relationship_type_label": derived_label,
                     "relationship_type_domain": derived_domain,
@@ -433,7 +435,7 @@ def transform(raw_data, disease_name):
 
             organism_info = target_id_to_organism.get(target_id, {})
             organism_name = organism_info.get("organism_name")
-            organism_id = organism_info.get("organism_id")
+            organism_tax_id = organism_info.get("organism_tax_id")
 
             molecule_display_name = molecule_id_to_pref_name.get(mol_id, mol_id)
             target_display_name = target_id_to_pref_name.get(target_id, target_id)
@@ -441,7 +443,7 @@ def transform(raw_data, disease_name):
             if target_id not in added_target_ids:
                 entities.append({
                     "name": target_display_name,
-                    "domain": "healthcare",                 # <-- changed
+                    "domain": "healthcare",
                     "entity_type": BIOLOGICAL_ENTITY_TYPE,
                     "expression": target_id,
                     "confidence": 2,
@@ -449,7 +451,7 @@ def transform(raw_data, disease_name):
                 })
                 sources.append({
                     "entity_name": target_display_name,
-                    "domain": "healthcare",                 # <-- changed
+                    "domain": "healthcare",
                     "source_name": "ChEMBL",
                     "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                 })
@@ -458,23 +460,23 @@ def transform(raw_data, disease_name):
                 if organism_name:
                     entities.append({
                         "name": organism_name,
-                        "domain": "healthcare",                 # <-- changed
+                        "domain": "healthcare",
                         "entity_type": CAUSAL_AGENT_ENTITY_TYPE,
-                        "expression": organism_id or organism_name,
+                        "expression": organism_tax_id or organism_name,
                         "confidence": 3,
                         "contributor": "ChEMBL",
                     })
                     sources.append({
                         "entity_name": organism_name,
-                        "domain": "healthcare",                 # <-- changed
+                        "domain": "healthcare",
                         "source_name": "ChEMBL",
                         "source_url": f"{CHEMBL_BASE_URL}target/{target_id}.json",
                     })
                     relationships.append({
                         "from_entity_name": target_display_name,
-                        "from_entity_domain": "healthcare",    # <-- changed
+                        "from_entity_domain": "healthcare",
                         "to_entity_name": organism_name,
-                        "to_entity_domain": "healthcare",      # <-- changed
+                        "to_entity_domain": "healthcare",
                         "relationship": "expressed_by",
                         "relationship_type_label": "Expressed By",
                         "relationship_type_domain": "CausalAgent",
@@ -487,9 +489,9 @@ def transform(raw_data, disease_name):
             targets_label, targets_domain = "Targets", "pharmacology"
             relationships.append({
                 "from_entity_name": molecule_display_name,
-                "from_entity_domain": "healthcare",          # <-- changed
+                "from_entity_domain": "healthcare",
                 "to_entity_name": target_display_name,
-                "to_entity_domain": "healthcare",            # <-- changed
+                "to_entity_domain": "healthcare",
                 "relationship": "targets",
                 "relationship_type_label": targets_label,
                 "relationship_type_domain": targets_domain,
@@ -503,9 +505,9 @@ def transform(raw_data, disease_name):
                 inhibits_label, inhibits_domain = "Inhibits", "pharmacology"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": "healthcare",      # <-- changed
+                    "from_entity_domain": "healthcare",
                     "to_entity_name": target_display_name,
-                    "to_entity_domain": "healthcare",        # <-- changed
+                    "to_entity_domain": "healthcare",
                     "relationship": "inhibits",
                     "relationship_type_label": inhibits_label,
                     "relationship_type_domain": inhibits_domain,
@@ -518,9 +520,9 @@ def transform(raw_data, disease_name):
                 binds_label, binds_domain = "Binds To", "molecular"
                 relationships.append({
                     "from_entity_name": molecule_display_name,
-                    "from_entity_domain": "healthcare",      # <-- changed
+                    "from_entity_domain": "healthcare",
                     "to_entity_name": target_display_name,
-                    "to_entity_domain": "healthcare",        # <-- changed
+                    "to_entity_domain": "healthcare",
                     "relationship": "binds_to",
                     "relationship_type_label": binds_label,
                     "relationship_type_domain": binds_domain,

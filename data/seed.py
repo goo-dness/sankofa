@@ -12,7 +12,7 @@ from ingestions.pubmed import run_pubmed_ingestion
 from ingestions.who import extract_who_data, load_to_database, transform_to_entities, INDICATOR_MAP
 from models.relations_type import RelationshipTypes
 from models.coverage import IngestionCoverage
-from ingestions.chembl import run_chembl_ingestion, MESH_DISEASE_MAP
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -174,21 +174,9 @@ def run_pubmed():
     print("PubMed ingestion pipeline finished.")
 
 
-def run_chembl():
-    print("Starting ChEMBL ingestion pipeline...")
-    for disease_name in MESH_DISEASE_MAP:
-        extract_succeeded, touched_relationship_types = run_chembl_ingestion(disease_name)
-        if extract_succeeded:
-            with get_db() as db_session:
-                for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "ChEMBL", rel_type)
-        else:
-            print(f"SKipping coverage for {disease_name}-- no data reocrded")
-    print("ChEMBL ingestion complete.")
 
 if __name__ == "__main__":
     seed_relationship_types()
     run_who_ingestion()
     run_openalex()
     run_pubmed()
-    run_chembl()
