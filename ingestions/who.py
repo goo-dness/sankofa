@@ -125,7 +125,7 @@ def transform_to_entities(
         if disease_name not in unique_disease_names:
             disease_entity = {
                 "name": disease_name,
-                "domain": "epidemiology",
+                "domain": "healthcare",
                 "entity_type": "disease",
                 "confidence": 3,
                 "contributor": "WHO GHO",
@@ -136,7 +136,7 @@ def transform_to_entities(
             sources.append(
                 {
                     "entity_name": disease_name,
-                    "domain": "epidemiology",
+                    "domain": "healthcare",
                     "source_name": "WHO GHO",
                     "source_url": source_url,
                 }
@@ -194,7 +194,7 @@ def transform_to_entities(
                 "from_entity_name": statistic_entity_name,
                 "from_entity_domain": "epidemiology",
                 "to_entity_name": disease_name,
-                "to_entity_domain": "epidemiology",
+                "to_entity_domain": "healthcare",
                 "relationship_name": "measures",
                 "confidence": 3,
                 "context": f"Year: {time_dim},Source: WHO GHO",

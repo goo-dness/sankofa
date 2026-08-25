@@ -12,8 +12,7 @@ from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
 from typing import List, Dict, Any, Tuple
 from ingestions.openalex import DISEASE_VOCABULARY, TREATMENT_VOCABULARY, CAUSAL_AGENT_ENTITY_TYPE
-from app.database import get_db
-from data.seed import record_coverage
+
 
 CHEMBL_BASE_URL = "https://www.ebi.ac.uk/chembl/api/data/"
 DRUG_INDICATION_CAP_PER_DISEASE = 1000
@@ -780,18 +779,3 @@ def run_chembl_ingestion(disease_name):
     touched_relationship_types = set(r["relationship"] for r in relationships)
     print(f"ChEMBL ingestion complete for: {disease_name}")
     return extract_succeeded, touched_relationship_types
-
-def run_chembl():
-    print("Starting ChEMBL ingestion pipeline...")
-    for disease_name in MESH_DISEASE_MAP:
-        extract_succeeded, touched_relationship_types = run_chembl_ingestion(disease_name)
-        if extract_succeeded:
-            with get_db() as db_session:
-                for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "ChEMBL", rel_type)
-        else:
-            print(f"SKipping coverage for {disease_name}-- no data reocrded")
-        print("ChEMBL ingestion complete.")
-
-if __name__ == "__main__":
-    run_chembl()

@@ -270,6 +270,89 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-08-25 — who.py disease-entity domain corrected from "epidemiology" to "healthcare"
+
+**Decided:** `transform_to_entities()` in `who.py` now assigns
+`domain="healthcare"` to disease entities (and their `EntitySource`
+records), matching OpenAlex/PubMed. The `measures` relationship's
+`to_entity_domain` (statistic → disease) changed to match. Region
+entities and the `statistic_entity`'s own domain are untouched —
+verified via live DB query that region entities already agree on
+`domain="geography"` across WHO/OpenAlex/PubMed (zero fragmentation),
+and that `statistic_entity` names are WHO-only compound strings with
+no cross-pipeline collision risk.
+**Why:** The dedup query in `load_to_database()` was already correct
+(normalized name + domain filter) — the bug was upstream, in the
+domain value itself being assigned differently per pipeline for the
+same real-world disease entity. The earlier backfill
+(`merge_domain_duplicate_entities.py`) fixed existing rows but did not
+stop new fragmentation on future WHO runs; this closes that gap.
+**Rules out:** Touching `region_entity`'s domain or `statistic_entity`'s
+domain — confirmed via `GROUP BY name, domain` query that neither is
+actually broken.
+**Unblocks:** WHO GHO can be re-run without re-fragmenting disease
+entities across `epidemiology`/`healthcare`. Closes the highest-priority
+open task from the previous session.
+
+### 2026-08-22 — ChEMBL: organism/target mismatch fixed, domain field corrected
+
+**Decided:** Fixed a bug where `transform()`'s mechanisms loop overwrote the
+correctly-computed target organism with a stale, leaked loop variable
+(`target_record`) from an earlier, unrelated loop over `raw_data["targets"]`
+— causing most `expressed_by` relationships to attach the wrong organism to
+a target. Merged the two separate target loops into one, removed the dead
+mutation lines, and confirmed the fix via DB query showing correct
+per-organism variation (Homo sapiens vs. Schistosoma mansoni targets
+correctly distinguished).
+
+Also fixed: every entity/relationship dict in `transform()` was setting
+`domain` to `DISEASE_VOCABULARY` (the 35-disease list, imported from
+openalex.py) instead of the string `"healthcare"` — caused a Postgres
+`character varying = text[]` error on first real run. Corrected to the
+literal `"healthcare"` string, matching openalex.py/pubmed.py convention
+(no shared constant exists for it in either file, so none was introduced
+here either).
+
+Also fixed: `target_id_to_organism` was reading a field named
+`organism_id`, which does not exist anywhere in ChEMBL's real `/target`
+response (confirmed via curl). Swapped to `tax_id`, the actual NCBI
+Taxonomy identifier ChEMBL returns, renamed to `organism_tax_id`
+throughout for clarity.
+
+**Why:** All three were caught by verifying real DB errors and real API
+output against the code's assumptions, not by inspection alone — same
+principle as every other ChEMBL bug this project has hit.
+**Rules out:** Nothing architectural — correctness fixes within the
+existing extract/transform/load pattern.
+**Unblocks:** The `expressed_by` bridge relationship (target → organism)
+is now trustworthy enough to build the `inhibits + causes → treats`
+inference rule on top of, once ChEMBL ingestion is run for real across
+all diseases.
+
+### 2026-08-22 — ChEMBL extract() redesigned: batched __in requests instead of one-call-per-ID
+
+**Decided:** `extract()`'s molecule/mechanism/target fetching stage was
+rewritten from three sequential loops making one HTTP call per unique ID
+(~300+ calls for a single disease like malaria) to three loops making one
+batched call per 50-ID chunk, using ChEMBL's documented `__in` filter
+(e.g. `molecule_chembl_id__in=ID1,ID2,...`) — confirmed against ChEMBL's
+own official docs and Python client examples, then verified directly via
+curl against the real molecule, mechanism, and target endpoints before
+implementing. Added two shared helpers, `chunk_ids()` and `fetch_batch()`,
+since the three fetch stages were otherwise near-identical copy-paste.
+
+**Why:** ChEMBL's per-ID sequential design was the actual cause of runs
+that appeared to hang — not a true infinite loop, but thousands of
+sequential round-trips (further worsened by a `time.sleep(0.1)`
+indentation regression and a stray backtick in `CHEMBL_BASE_URL` found
+during the same debugging session). OpenAlex/PubMed never had this
+problem since their APIs are called once per disease via pagination, not
+once per discovered entity.
+**Rules out:** Nothing architectural — `DRUG_INDICATION_CAP_PER_DISEASE`
+pagination stage untouched, since it was never the bottleneck.
+**Unblocks:** ChEMBL ingestion runtime should now be roughly in line with
+OpenAlex/PubMed instead of an outlier, making a full-vocabulary run
+practical to actually execute.
 
 ### 2026-08-09 — `expressed_by` (protein→organism) bridge relationship confirmed and named; `treats + treats → treats` rule ruled out
 
