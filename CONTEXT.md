@@ -2,7 +2,7 @@
 
 **Developer:** Goodness Akuba, Lagos, Nigeria. Self-taught software developer, aspiring AI systems programmer.
 **Repo:** github.com/goo-dness
-**Last updated:** July 2026
+**Last updated:** August 2026
 
 ---
 
@@ -72,7 +72,7 @@ sankofa/                    (repo root)
 │   ├── weighing.py        (aggregate_confidence, aggregate_evidence, weigh_chain, weigh_derived_fact)
 │   ├── contradictions.py  (detect_contradictions, CONFLICT_PAIRS)
 │   └── epistemic.py       (resolve_epistemic_state, EpistemicState enum)
-│   (rules.py not yet created — Layer 2/3 derivation, blocked on expressed_by bridge, see §13 2026-08-09)
+│   ├── rules.py               (Layer 2/3 derivation rules — causal_path implemented and verified 2026-08-25, see §13)
 ├── data/
 │   ├── relationship_types.py
 │   └── seed.py           (owns all orchestrator functions — run_who_ingestion(), run_openalex(), run_pubmed(), run_chembl(), record_coverage())
@@ -80,7 +80,7 @@ sankofa/                    (repo root)
 │   ├── who.py
 │   ├── openalex.py       ✅ complete, includes causes detection + organism name normalization (§13 2026-08-01, 2026-08-09)
 │   ├── pubmed.py         ✅ complete, includes causes detection + organism name normalization (§13 2026-08-01, 2026-08-09)
-│   └── chembl.py         ✅ complete, `expressed_by` widening not yet started (§13 2026-08-09)
+│   └── chembl.py          ✅ complete, includes expressed_by bridge (protein→organism, widened 2026-08-09) and derived_from (salt/form hierarchy, confirmed 2026-08-25)
 ├── scripts/
 │   ├── cleanup_duplicates.py           (one-time — literal duplicate entities from before the unique name+domain index existed)
 │   ├── normalize_causal.py             (one-time — renames/merges informal CausalAgent organism names to formal binomial names, per ORGANISM_NAME_MAP)
@@ -269,6 +269,102 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-08-25 — Governing principle locked: hypothesis rules vs. resolution rules
+
+**Decided:** Every future inference rule in `computation/rules.py` must be
+classified as one of two kinds before it's built, and the two kinds are
+implemented differently — never with the same scoring machinery.
+
+**Hypothesis rules** — compose genuinely different facts through a
+mechanism to produce a new claim that did not previously exist and
+carries real uncertainty. Example: `causal_path` (`inhibits +
+expressed_by + causes → treats`) — this is a testable claim a
+pharmacologist would propose from target biology, not yet confirmed.
+These rules use the full `weigh_derived_fact()` treatment: `DECAY`
+applied per hop, tier capped at `min(premise tiers)`, `derivation_depth`
+tracked, cycle-guarded. Confidence must always read as less certain
+than the facts it's built from — this is the anti-laundering guarantee
+already locked on 2026-07-21.
+
+**Resolution rules** — recognize that two already-known facts describe
+the same real-world thing under a different name or form, and
+propagate an existing fact across that identity — not a new claim, not
+new uncertainty. Example: ChEMBL's `derived_from` relationship, which
+was verified (2026-08-25, see below) to specifically encode
+salt/form-to-active-moiety hierarchy via ChEMBL's own
+`parent_molecule_chembl_id` field — e.g. `PROGUANIL HYDROCHLORIDE
+derived_from PROGUANIL`. If the active moiety treats a disease, its
+salt form treats the same disease with no loss of certainty — this is
+not an inference, it's recognizing identity. These rules do NOT use
+`weigh_derived_fact()`, do NOT decay, and do NOT tier-cap — they copy
+confidence forward at full strength, in a separate function from the
+hypothesis-rule pattern.
+
+**Why:** Running both kinds through the same decay/cap pipeline would
+treat "confirmed identity" and "mechanistic hypothesis" as the same
+category of uncertainty — a real violation of the three-state
+epistemic model (§9) and the no-confidence-laundering principle. A
+derived hypothesis should always read as less certain than its
+premises. A resolved identity should not lose certainty at all. Also
+settles why entities are NOT merged despite representing the same
+active substance: a salt form vs. free-base form carries real clinical
+distinctions (solubility, dosing route, sometimes bioavailability) that
+collapsing into one entity would destroy — propagate the shared
+`treats` fact between two distinguishable entities instead.
+
+**Verification performed before locking this:** Manually inspected 10
+real `derived_from` rows (all salt-counterion pairs — HYDROCHLORIDE,
+PHOSPHATE, SULFATE, BROMIDE, PAMOATE, SODIUM, MALEATE), then confirmed
+against the real `chembl.py` code that `derived_from` is populated
+directly from ChEMBL's `parent_molecule_chembl_id` field on
+`/drug_indication` records — not a name-matching heuristic. Confirmed
+this is ChEMBL's own curated salt/form hierarchy field specifically,
+not a general "chemically related" relationship, ruling out prodrug-pair
+contamination as a live concern for this relationship type.
+
+**Rules out:** Using `derived_from + treats → treats` as a
+`causal_path`-style hypothesis rule (rejected — would falsely discount
+confidence on facts that aren't actually uncertain). Merging salt-form
+and free-base entities into a single row (rejected — destroys real
+clinical distinction).
+
+**Unblocks:** The resolution-rule function (full-confidence, zero-decay
+`treats` propagation across `derived_from` edges) can now be designed
+and built as its own distinct function, separate from
+`causal_path`/`weigh_derived_fact`. Also sets the classification test
+every future rule candidate gets run through before design starts:
+"does this introduce a new claim with real uncertainty, or recognize
+an existing fact under a different identity" — e.g.
+`structurally_similar_to + treats → treats` (genuinely different
+molecules, real analogy) would be a hypothesis rule; anything keyed off
+identity/synonym relationships would be a resolution rule.
+
+### 2026-08-25 — First inference rule (causal_path) implemented and verified: 75 treats facts derived
+
+**Decided:** `computation/rules.py`'s `causal_path(db)` — the first
+composable inference rule (`inhibits + expressed_by + causes → treats`)
+— is implemented and run against live data. 78 verified 3-hop candidate
+chains in, 75 `treats` facts inserted, 3 correctly caught by an in-run
+duplicate guard (same molecule+disease pair reachable via two different
+protein/organism chains — confirmed live, not just theoretical). All
+inserted at tier 3, depth 1, zero cycle detections — expected for a
+first-pass derivation with no derived-from-derived chains yet.
+**Why:** Validates the whole rule-function pattern end to end: the
+corrected `would_create_cycle()` (checks the new fact's triple against
+ancestry, not premises against each other), `weigh_derived_fact()`'s
+real signature (list of premises, `"depth"` not `"derivation_depth"`
+as the dict key), the `NOT EXISTS`-scoped candidate query, and the
+in-run dedup guard for the same-pair-via-different-chains edge case —
+all worked correctly on first real run, no data corruption.
+**Unblocks:** `causal_path` is the working template for every future
+rule function — same shape (lookup relationship_id, candidate query
+with NOT EXISTS, guards, weigh_derived_fact, insert, summary counts)
+can be reused. Next candidate: `derived_from + treats → treats`
+(chainable pairs, mentioned as an alternative in the original
+2026-07-21 decision) — this would be the first rule to actually
+exercise the cycle guard and depth cap for real, since it chains off
+derived facts instead of only observed ones.
 
 ### 2026-08-25 — who.py disease-entity domain corrected from "epidemiology" to "healthcare"
 
