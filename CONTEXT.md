@@ -270,6 +270,37 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-08-26 — Three-state epistemic resolution (epistemic.py) implemented and verified
+
+**Decided:** `computation/epistemic.py`'s `resolve_epistemic_state()`
+rewritten to query `ingestion_coverage` live via a new `has_coverage()`
+helper, replacing the old `coverage_registry: dict | None` parameter
+design. Removed a real bug in the old version: `coverage_registry is
+None` used to default to `KNOWABLY_ABSENT`, silently treating "we
+don't know if this was checked" as "we checked and found nothing" —
+the exact failure mode the 2026-07-29/30 coverage-tracking decision
+warned against. The new version has no such fallback; every call
+genuinely queries the database.
+**Verified against real data, three cases:** malaria+treats → KNOWN
+(118 relationships, aggregated confidence 3, evidence_count 606,
+correctly using max-not-average per §5). malaria+measures →
+KNOWABLY_ABSENT (correctly distinguishes zero query results from zero
+coverage — lists "WHO GHO" as the source that actually checked).
+malaria+traditionally_treats → UNCHARTED (correctly flags the
+ethnomedicine gap from §7 as a coverage gap, not a negative finding).
+**Also fixed in passing:** a "memasures" typo in `seed.py`'s
+`run_who_ingestion()` zero-rows branch — was silently writing WHO's
+empty-result coverage rows under a name ("memasures") that could never
+match a real query for "measures", which would have caused Test 2
+above to incorrectly resolve UNCHARTED instead of KNOWABLY_ABSENT.
+**Rules out:** Any code path that returns KNOWABLY_ABSENT without
+having actually queried live coverage data.
+**Unblocks:** Every future rule and query path can now report honest
+epistemic state instead of ambiguous empty results. This is the
+foundational honesty layer §9 specified — the next layers
+(contradiction detection, corroboration via weigh_chain) should report
+through this classification rather than around it.
+
 ### 2026-08-25 — Governing principle locked: hypothesis rules vs. resolution rules
 
 **Decided:** Every future inference rule in `computation/rules.py` must be

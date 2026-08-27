@@ -1,45 +1,65 @@
 from enum import Enum
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 from computation.weighing import aggregate_confidence, aggregate_evidence
+
 class EpistemicState(str, Enum):
     KNOWN = "Known"
     KNOWABLY_ABSENT = "Knowably absent"
     UNCHARTED = "Uncharted"
 
-def resolve_epistemic_state(query_results: list[dict], coverage_registry: dict[str, list[str]] | None = None, disease_name: str | None = None, ) -> dict:
-    """Classify query results into one of three epistemic states
-    1. Known --- relationship exists, backed by >= 1 source
-    2. Knowably absent --- domain was ingested, nothing found
-    3. Uncharted --- domain hasn`t been ingested yet
+def has_coverage(db: Session, disease_name: str, relationship_type: str) -> list[str]:
+    """
+    Checks ingestion_coverage directly to see which sources (if any) have already checked this disease for this specific relationship type.
+    Returns a list of source names (e.g. ["WHO GHO", "OpenAlex"]), r an empty list if nothing has ever checked this combination.
+    """
+    normalized_name = disease_name.strip().lower()
 
-    coverage_registry: {disease_name: [source_names_ingested]}
-    Only needed for full three-state support; can be None initially.
+    rows = db.execute(text("""
+        SELECT DISTINCT source_name
+        FROM ingestion_coverage
+        WHERE disease_name = :disease_name
+            AND relationship_type = :relationship_type
+        """), {"disease_name": normalized_name, "relationship_type": relationship_type}).mappings().all()
+    return [row["source_name"] for row in rows]
+
+def resolve_epistemic_state(
+    db: Session,
+    query_results: list[dict],
+    disease_name: str,
+    relationship_type: str,
+) -> dict:
+    """
+    Classifies a query result into one of three epistemic states:
+        1. KNOWN -- relationship exists, backed by >= 1 source.
+        2. KNOWABLY_ABSENT -- this disease/relationship_type combo was genuinely checked by at least one source, nothing was found.
+        3. UNCHARTED -- no osurce has ever checked this combo. A coverage gap, not a negative finding.
     """
     if query_results:
-        return{
+        return {
             "state": EpistemicState.KNOWN,
             "data": query_results,
             "confidence": aggregate_confidence(query_results),
-            "evidence_count": aggregate_evidence(query_results)
+            "evidence_count": aggregate_evidence(query_results),
         }
 
-    if coverage_registry is None or disease_name is None:
-        return {
-            "state": EpistemicState.KNOWABLY_ABSENT,
-            "data": [],
-            "message": "No established relationship found.",
-        }
+    sources_checked = has_coverage(db, disease_name, relationship_type)
 
-    if disease_name in coverage_registry:
+    if sources_checked:
         return{
             "state": EpistemicState.KNOWABLY_ABSENT,
             "data": [],
-            "message": f"No established relationship found. "
-                        f"Sources checked: {', '.join(coverage_registry[disease_name])}",
+            "message": (
+                f"No established '{relationship_type}' relationship found "
+                f"for '{disease_name}'. Sources checked: {', '.join(sources_checked)}"
+            ),
         }
 
-    return{
+    return {
         "state": EpistemicState.UNCHARTED,
         "data": [],
-        "message": f"'{disease_name}' has not been ingested yet. "
-                   f"This is a coverage gap, not a negative finding.",
+        "message": (
+            f"'{disease_name}' has not been ingested for '{relationship_type}' yet. "
+            f"This is a coverage gap, not a negative finding."
+        ),
     }

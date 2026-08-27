@@ -99,7 +99,7 @@ def run_who_ingestion():
                     f" No data extracted for {indicator_code}--- extraction completed, no data.Skipping load."
                     )
                     with get_db() as db_session:
-                        for rel_type in ("memasures", "prevalent_in"):
+                        for rel_type in ("measures", "prevalent_in"):
                             record_coverage(db_session, "epidemiology", disease_name, "WHO GHO", rel_type)
                 else:
                     print(f"No data extracted for {indicator_code} -- extraction FAILED, coverage not recorded.")
