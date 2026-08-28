@@ -20,17 +20,9 @@ def detect_contradictions(results: list[dict]) -> list[dict]:
         entity_pairs[key].append(r)
 
     contradictions = []
-    seen_pairs = set()
-
     for pair_key, relationships in entity_pairs.items():
         from_id, to_id = pair_key
         reverse_key = (to_id, from_id)
-
-        # avoid checking the same undirected pair twice
-        undirected_key = frozenset(pair_key)
-        if undirected_key in seen_pairs:
-            continue
-        seen_pairs.add(undirected_key)
 
         same_dir_types = {r["relationship_type"] for r in relationships}
         reverse_relationships = entity_pairs.get(reverse_key, [])

@@ -270,6 +270,39 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-08-28 — contradictions.py: removed unsound `seen_pairs` dedup
+
+**Decided:** Removed the `seen_pairs`/`undirected_key` (`frozenset`) dedup
+block from `detect_contradictions()`. The block skipped reprocessing a
+directed pair `(B,A)` once `(A,B)` had been seen, on the assumption this
+avoided duplicate work. It didn't — same-direction and reverse-direction
+conflict checks are order-sensitive per `CONFLICT_PAIRS` tuple, so
+`(A,B)` and `(B,A)` test genuinely different conditions against
+different relationship rows, not repeats of each other. Skipping one
+direction silently dropped real contradictions rather than avoiding
+false ones.
+
+**Verification:** Confirmed via live query that zero bidirectional
+`(A→B, B→A)` entity pairs currently exist in `entity_relations`
+(self-loops excluded). So this bug was inert against current data —
+fixed anyway rather than deferred, since the fix was already in hand
+and cheap, unlike the WHO domain issue which required a larger
+coordinated change across ingestion pipelines.
+
+**Why:** Same distinct-entities corrective as the WHO domain fix, but
+caught before it caused a real drop in output — `causal_path()` or
+future rules (`structurally_similar_to + treats`, item 4 on the
+reasoning-layer roadmap) could plausibly start producing bidirectional
+edges, at which point this bug would have gone from inert to silently
+wrong.
+
+**Rules out:** Nothing architectural — pure correctness fix.
+
+**Unblocks:** `contradictions.py` verified against current real data
+(0 conflicts, as expected — no contradictory data ingested yet).
+Moving to item 3 on the reasoning-layer roadmap: `weigh_chain()`
+corroboration.
+
 ### 2026-08-26 — Three-state epistemic resolution (epistemic.py) implemented and verified
 
 **Decided:** `computation/epistemic.py`'s `resolve_epistemic_state()`
