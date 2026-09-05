@@ -270,6 +270,76 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-09-04 — chembl.py: fixed coverage misattribution + missing empty-result coverage
+
+**Decided:** run_chembl_ingestion() previously returned touched_relationship_types
+as a flat set of relationship-type strings (e.g. {"treats", "inhibits", "targets",
+"binds_to", "expressed_by", "derived_from"}), all recorded via record_coverage()
+against the triggering disease_name. Confirmed via live query that all four
+non-disease relationship types (binds_to, expressed_by, inhibits, targets) were
+already present in ingestion_coverage, misattributed to disease names instead of
+the molecule/target entities the facts are actually about (e.g. "malaria" +
+"inhibits" recorded, when the inhibits relationship is really between a molecule
+and a target, neither of which is malaria).
+
+**Fix:** run_chembl_ingestion() now returns touched_coverage as a set of
+(entity_name, relationship_type) tuples. "treats" stays attributed to
+disease_name (matches WHO/OpenAlex/PubMed convention). Every other relationship
+type is attributed to its own from_entity_name. seed.py's run_chembl() loop
+updated to unpack (entity_name, rel_type) pairs instead of bare relationship-type
+strings when calling record_coverage().
+
+Also fixed in the same pass: the empty-extraction early-return path was
+returning set() even when extract_succeeded was True (a genuine "checked,
+nothing found" case) -- meaning a disease with zero ChEMBL indication records
+would silently report as UNCHARTED instead of KNOWABLY_ABSENT. Now returns
+{(disease_name, "treats")} on a genuinely successful empty extraction, matching
+WHO's existing explicit zero-row coverage handling. Failure case (extraction
+itself failed) still correctly returns set(), since seed.py's extract_succeeded
+guard already skips recording coverage when extraction failed.
+
+**Why:** Coverage rows are the entire mechanism epistemic.py's three-state
+resolution depends on. Misattributed or missing coverage silently produces
+wrong KNOWN/KNOWABLY_ABSENT/UNCHARTED verdicts -- undermines the north star
+("Sankofa should reason like a human does... know the difference between
+false, unknown, and not-yet-looked-at") at the exact layer meant to guarantee it.
+
+**Discovered while:** investigating whether entity-centric coverage tracking
+was feasible (per the Expansionist council view on two-hop epistemic design) --
+found ChEMBL was already writing entity-adjacent coverage rows, just mislabeled
+under the wrong subject.
+
+**Rules out:** Nothing architectural -- this is a correctness fix inside an
+already-shipped, already-verified pipeline, same category as the who.py domain
+fix and the executor.py weigh_chain grouping fix.
+
+**Unblocks:** ingestion_coverage's real data is now trustworthy enough to build
+the two-hop/neighborhood epistemic composition on top of, without inheriting
+bad coverage attribution.
+
+### 2026-08-31 — weigh_chain() confirmed: corroboration across independent chains, not within-chain hop aggregation
+
+**Decided:** `weigh_chain()`'s MAX confidence / SUM evidence is correct
+as-is. It aggregates across multiple INDEPENDENT chains that each
+independently derive the same fact (corroboration) — not across the
+hops within a single derivation path. Within-chain hop composition is
+`weigh_derived_fact()`'s job (MIN across premises, per the 2026-07-21
+decision), and stays that way.
+
+**Why:** A sequential/within-chain MAX reading was considered and
+rejected — it would let one strong hop launder confidence for an
+entire chain, the exact anti-pattern already locked against.
+Independent-chains corroboration also avoids interacting badly with
+`contradictions.py`'s reverse-direction conflict checks in a way a
+within-chain reading would.
+
+**Rules out:** Using weigh_chain() to score hops inside one
+causal_path()-style derivation — that stays weigh_derived_fact()'s
+responsibility.
+
+**Unblocks:** weighing.py's two aggregation functions are now
+unambiguous. weigh_chain() ready to verify against real data next.
+
 ### 2026-08-28 — contradictions.py: removed unsound `seen_pairs` dedup
 
 **Decided:** Removed the `seen_pairs`/`undirected_key` (`frozenset`) dedup

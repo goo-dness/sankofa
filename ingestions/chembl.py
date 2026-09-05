@@ -762,6 +762,7 @@ def run_chembl_ingestion(disease_name):
     ):
         if extract_succeeded:
             print(f"No records found for {disease_name}--- extraction successfully, no data exists.")
+            return extract_succeeded, {(disease_name, "treats")}
         else:
             print(f"No records found for {disease_name} --- extraction FAILED, this is not a verified absence.")
         return extract_succeeded, set()
@@ -776,6 +777,13 @@ def run_chembl_ingestion(disease_name):
     finally:
         db_session.close()
 
-    touched_relationship_types = set(r["relationship"] for r in relationships)
+    # Coverage attribution: "treats" stays attributed to the disease
+    # (matches WHO/OPenAlex/PubMed convention). Every other relationship type (derived_from, targets, inhibits, binds_to, expressed_by) is attributed to its own from_entity_name, not the triggering disease -- these facts are about molecule or target, not about the disease.
+    touched_coverage = set()
+    for r in relationships:
+        if r["relationship"] == "treats":
+            touched_coverage.add((disease_name, "treats"))
+        else:
+            touched_coverage.add((r["from_entity_name"], r["relationship"]))
     print(f"ChEMBL ingestion complete for: {disease_name}")
-    return extract_succeeded, touched_relationship_types
+    return extract_succeeded, touched_coverage

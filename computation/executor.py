@@ -1,3 +1,4 @@
+from collections import defaultdict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from computation.queries import (
@@ -22,6 +23,7 @@ CITATIONS_QUERY = text("""
     FROM relationship_sources rs
     WHERE rs.relationship_id = ANY(:relationship_ids)
     """)
+
 def fetch_citations(db: Session, relationship_ids: list[int]) -> dict[int, list[dict]]:
     if not relationship_ids:
         return {}
@@ -32,6 +34,28 @@ def fetch_citations(db: Session, relationship_ids: list[int]) -> dict[int, list[
         rid = r["relationship_id"]
         citations.setdefault(rid, []).append(dict(r))
     return citations
+
+def group_results_by_fact(results: list[dict], is_neighborhood: bool) -> dict:
+    # the same fact = same (from_entity_id, to_entity_id) pair
+    # for two_hop queries, or same connected_entity_id for neighborhood queries
+    grouped = defaultdict(list)
+    for row in results:
+        if is_neighborhood:
+            fact_key = row["connected_entity_id"]
+        else:
+            fact_key = row["from_entity_id"], row["to_entity_id"]
+        grouped[fact_key].append(row)
+    return grouped
+
+def compute_chain_weights(results: list[dict], is_neighborhood: bool) -> dict:
+    # Returns one weigh_chain() result per distinct fact, not one
+    # global blended result for the whole query
+    grouped = group_results_by_fact(results, is_neighborhood)
+
+    chain_weights = {}
+    for fact_key, group_rows in grouped.items():
+        chain_weights[fact_key] = weigh_chain(group_rows)
+    return chain_weights
 
 
 def execute_single_hop(db: Session, source_name: str, relationship_type: str) -> dict:
@@ -45,7 +69,7 @@ def execute_single_hop(db: Session, source_name: str, relationship_type: str) ->
     citations = fetch_citations(db, relationship_ids)
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),
+        "epistemic_state": resolve_epistemic_state(db, results, source_name, relationship_type),
         "query_results": results,
         "citations": citations,
         "contradictions": [],
@@ -68,11 +92,11 @@ def execute_two_hop_forward(db: Session, source_name: str, first_relationship: s
     citations = fetch_citations(db, list(all_ids))
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),
+        "epistemic_state": resolve_epistemic_state(results),  # ITEM 4 — not fixed yet, deliberately left as-is
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),
-        "chain_weight": weigh_chain(results) if results else None,
+        "chain_weight": compute_chain_weights(results, is_neighborhood=False) if results else None,
     }
 
 def execute_two_hop_backward(db: Session, target_name: str, first_relationship: str, second_relationship: str, max_depth: int= 2,) -> dict:
@@ -91,11 +115,11 @@ def execute_two_hop_backward(db: Session, target_name: str, first_relationship: 
     citations = fetch_citations(db, list(all_ids))
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),
+        "epistemic_state": resolve_epistemic_state(results),  # ITEM 4 — not fixed yet, deliberately left as-is
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),
-        "chain_weight": weigh_chain(results) if results else None,
+        "chain_weight": compute_chain_weights(results, is_neighborhood=False) if results else None,
     }
 
 def execute_neighborhood(db: Session, entity_id: int, depth: int = 1,) -> dict:
@@ -123,11 +147,11 @@ def execute_neighborhood(db: Session, entity_id: int, depth: int = 1,) -> dict:
     citations = fetch_citations(db, list(all_ids))
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),
+        "epistemic_state": resolve_epistemic_state(results),  # ITEM 4 — not fixed yet, deliberately left as-is
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),
-        "chain_weight": weigh_chain(results) if results else None,
+        "chain_weight": compute_chain_weights(results, is_neighborhood=True) if results else None,
     }
 
 def execute_path_query(db: Session, start_entity_id: int, end_entity_id: int, max_depth: int=3,) -> dict:

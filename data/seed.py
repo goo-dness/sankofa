@@ -176,11 +176,11 @@ def run_pubmed():
 def run_chembl():
     print("Starting ChEMBL ingestion pipeline...")
     for disease_name in MESH_DISEASE_MAP:
-        extract_succeeded, touched_relationship_types = run_chembl_ingestion(disease_name)
+        extract_succeeded, touched_coverage = run_chembl_ingestion(disease_name)
         if extract_succeeded:
             with get_db() as db_session:
-                for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "ChEMBL", rel_type)
+                for entity_name, rel_type in touched_coverage:
+                    record_coverage(db_session, "healthcare", entity_name, "ChEMBL", rel_type)
         else:
             print(f"SKipping coverage for {disease_name}-- no data reocrded")
         print("ChEMBL ingestion complete.")
