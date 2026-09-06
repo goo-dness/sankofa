@@ -270,6 +270,72 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-09-06 — Item 4 (two-hop epistemic resolution): forward/backward code-complete, live verification partially blocked by data gap
+
+**Decided:** `resolve_chain_epistemic_state_forward()` and
+`resolve_chain_epistemic_state_backward()` added to `epistemic.py`,
+implementing the shared combinator design: non-empty results delegate
+to `resolve_epistemic_state()`; empty results decompose into hop1
+coverage → hop1 rows → per-intermediate hop2 coverage, weakest-link
+UNCHARTED/KNOWABLY_ABSENT. `SINGLE_HOP_BACKWARD_QUERY` added to
+`queries.py` to support backward's hop1 lookup. `executor.py` call
+sites updated for both functions.
+
+**Bug found and fixed during verification:** `TWO_HOP_FORWARD_QUERY`
+and `TWO_HOP_BACKWARD_QUERY`'s final SELECT had no depth filter --
+the recursive CTE's depth-1 (anchor) rows were flowing through
+unfiltered alongside depth-2 (completed chain) rows, so any two-hop
+query where hop 2 failed to match still returned non-empty results
+(the leftover hop-1 row), causing every such case to silently report
+KNOWN instead of ever reaching epistemic resolution. Fixed by adding
+`WHERE t.depth = :max_depth` to both queries' final SELECT. Confirmed
+real and currently biting, not just theoretical -- caught via live
+verification, not code review.
+
+**Verification status:**
+- Branch (a) hop1 uncovered -> UNCHARTED: CONFIRMED against live data
+  (`buruli ulcer` + `activates`)
+- Branch (b) hop1 covered, zero rows -> KNOWABLY_ABSENT: CONFIRMED
+  against live data (`cholera` + `treats`)
+- Branch (c) hop1 real, hop2 uncovered -> UNCHARTED: NOT YET
+  VERIFIABLE against live data
+- Branch (d) all covered, genuinely empty -> KNOWABLY_ABSENT: NOT YET
+  VERIFIABLE against live data
+
+**Why (c)/(d) are blocked:** both require a two-hop chain where BOTH
+the source and the intermediate entity are diseases (coverage is only
+ever tracked per-disease via `record_coverage()`). Checked `malaria`'s
+full outgoing relationship set -- `prevalent_in` only, every
+destination a Country/Continent, never another disease. Checked the
+entire graph for any disease-to-disease edge: exactly one row exists
+(`marburg virus causes marburg virus`), which is a self-loop and
+almost certainly a data quality artifact (likely an entity-dedup
+issue from ingestion, not a real epidemiological fact) -- not treated
+as valid test data. No genuine disease-to-disease relationship
+currently exists anywhere in the live graph (`comorbid_with`,
+`progresses_to`, `risk_factor_for`, `variant_of`, etc. -- all zero
+rows).
+
+**Decision:** (c) and (d) are logically sound by code inspection and
+by the confirmed-working (a)/(b) cases sharing the same combinator
+function, but are explicitly left unverified against live data rather
+than forced through the self-loop anomaly, which would give false
+confidence either way. This is a real gap caused by insufficient
+disease-to-disease relationship data, not a code defect. No further
+action until real data exists.
+
+**Unblocks:** Item 4 (forward/backward) can be considered
+code-complete and safe to rely on for (a)/(b)-shaped queries now.
+(c)/(d) verification is deferred, not abandoned -- revisit once any
+ingestion or future rule (e.g. `structurally_similar_to`, or
+ethnomedicine ingestion per §7) produces real disease-to-disease
+edges.
+
+**Rules out:** Nothing further needs deciding on Item 4's
+forward/backward logic. The marburg virus self-loop is flagged as a
+separate, unrelated data-quality question -- not investigated here,
+not blocking anything.
+
 ### 2026-09-04 — chembl.py: fixed coverage misattribution + missing empty-result coverage
 
 **Decided:** run_chembl_ingestion() previously returned touched_relationship_types

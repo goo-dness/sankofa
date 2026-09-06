@@ -2,6 +2,7 @@ from enum import Enum
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from computation.weighing import aggregate_confidence, aggregate_evidence
+from computation.queries import SINGLE_HOP_QUERY, SINGLE_HOP_BACKWARD_QUERY
 
 class EpistemicState(str, Enum):
     KNOWN = "Known"
@@ -63,3 +64,47 @@ def resolve_epistemic_state(
             f"This is a coverage gap, not a negative finding."
         ),
     }
+
+def resolve_chain_epistemic_state_forward(db, query_results, source_name, first_relationship, second_relationship):
+    if query_results:
+        return resolve_epistemic_state(db, query_results, source_name, first_relationship)
+
+    hop1_sources = has_coverage(db, source_name, first_relationship)
+    if not hop1_sources:
+        return {"state": EpistemicState.UNCHARTED, "data": [], "message": f"'{source_name}' not checked for '{first_relationship}' yet -- coverage gap at hop 1."}
+
+    hop1_rows = db.execute(SINGLE_HOP_QUERY, {"source_name": source_name, "relationship_type": first_relationship}).mappings().all()
+
+    if not hop1_rows:
+        return {"state": EpistemicState.KNOWABLY_ABSENT, "data": [], "message": f"No '{first_relationship}' relationship found for '{source_name}'. Sources checked: {hop1_sources}."}
+
+    for row in hop1_rows:
+        intermediate_name = row["to_name"]
+        hop2_sources = has_coverage(db, intermediate_name, second_relationship)
+
+        if not hop2_sources:
+            return {"state": EpistemicState.UNCHARTED, "data": [], "message": f"Some intermediates from '{first_relationship}' not checked for '{second_relationship}' yet -- coverage gap for hop 2."}
+
+    return {"state": EpistemicState.KNOWABLY_ABSENT, "data": [], "message": f"No two-hop chain found via '{first_relationship}' -> '{second_relationship}' from '{source_name}'. All intermediates checked."}
+
+def resolve_chain_epistemic_state_backward(db, query_results, target_name, first_relationship, second_relationship):
+    if query_results:
+        return resolve_epistemic_state(db, query_results, target_name, first_relationship)
+
+    hop1_sources = has_coverage(db, target_name, first_relationship)
+    if not hop1_sources:
+        return {"state": EpistemicState.UNCHARTED, "data": [], "message": f"'{target_name}' not checked for '{first_relationship}' yet -- coverage gap at hop 1."}
+
+    hop1_rows = db.execute(SINGLE_HOP_BACKWARD_QUERY, {"target_name": target_name, "relationship_type": first_relationship}).mappings().all()
+
+    if not hop1_rows:
+        return {"state": EpistemicState.KNOWABLY_ABSENT, "data": [], "message": f"No '{first_relationship}' found leading to '{target_name}'. Sources checked: {hop1_sources}."}
+
+    for row in hop1_rows:
+        intermediate_name = row["from_name"]
+        hop2_sources = has_coverage(db, intermediate_name, second_relationship)
+
+        if not hop2_sources:
+            return {"state": EpistemicState.UNCHARTED, "data": [], "message": f"Some intermediates not checked for '{second_relationship}' yet -- coverage gap at hop 2."}
+
+    return {"state": EpistemicState.KNOWABLY_ABSENT, "data": [], "message": f"No two-hop chain found via '{first_relationship}' <- '{second_relationship}' into '{target_name}'. All intermediates checked."}

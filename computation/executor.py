@@ -3,6 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from computation.queries import (
     SINGLE_HOP_QUERY,
+    SINGLE_HOP_BACKWARD_QUERY,
     TWO_HOP_FORWARD_QUERY,
     TWO_HOP_BACKWARD_QUERY,
     NEIGHBORHOOD_QUERY,
@@ -10,7 +11,7 @@ from computation.queries import (
 )
 from computation.weighing import aggregate_confidence, aggregate_evidence, weigh_chain
 from computation.contradictions import detect_contradictions
-from computation.epistemic import resolve_epistemic_state, EpistemicState
+from computation.epistemic import resolve_epistemic_state, EpistemicState, resolve_chain_epistemic_state_forward, resolve_chain_epistemic_state_backward
 
 CITATIONS_QUERY = text("""
     SELECT
@@ -92,7 +93,7 @@ def execute_two_hop_forward(db: Session, source_name: str, first_relationship: s
     citations = fetch_citations(db, list(all_ids))
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),  # ITEM 4 — not fixed yet, deliberately left as-is
+        "epistemic_state": resolve_chain_epistemic_state_forward(db, results, source_name, first_relationship, second_relationship),
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),
@@ -115,7 +116,7 @@ def execute_two_hop_backward(db: Session, target_name: str, first_relationship: 
     citations = fetch_citations(db, list(all_ids))
 
     return {
-        "epistemic_state": resolve_epistemic_state(results),  # ITEM 4 — not fixed yet, deliberately left as-is
+        "epistemic_state": resolve_chain_epistemic_state_backward(db, results, target_name, first_relationship, second_relationship),
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),

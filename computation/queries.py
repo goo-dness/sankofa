@@ -20,6 +20,26 @@ SINGLE_HOP_QUERY = text("""
         AND rt.name = :relationship_type
     """)
 
+SINGLE_HOP_BACKWARD_QUERY = text("""
+    SELECT
+        e_from.id AS from_id,
+        e_from.name AS from_name,
+        e_to.id AS to_id,
+        e_to.name AS to_name,
+        er.id AS relationship_id,
+        rt.name AS relationship_type,
+        er.confidence,
+        er.evidence_count,
+        er.context,
+        1 AS depth
+    FROM entity_relations er
+    JOIN entities e_from ON er.from_entity_id = e_from.id
+    JOIN entities e_to ON er.to_entity_id = e_to.id
+    JOIN relationship_types rt ON er.relationship_id = rt.id
+    WHERE e_to.name = :target_name
+        AND rt.name = :relationship_type
+    """)
+
 TWO_HOP_FORWARD_QUERY = text("""
     WITH RECURSIVE traversal AS (
         SELECT
@@ -69,6 +89,7 @@ TWO_HOP_FORWARD_QUERY = text("""
     JOIN entities e1 ON t.from_entity_id = e1.id
     JOIN entities e2 ON t.to_entity_id = e2.id
     JOIN relationship_types rt ON t.relationship_id = rt.id
+    WHERE t.depth = :max_depth
     """)
 
 TWO_HOP_BACKWARD_QUERY = text("""
@@ -120,6 +141,7 @@ TWO_HOP_BACKWARD_QUERY = text("""
     JOIN entities e1 ON t.from_entity_id = e1.id
     JOIN entities e2 ON t.to_entity_id = e2.id
     JOIN relationship_types rt ON t.relationship_id = rt.id
+    WHERE t.depth = :max_depth
     """)
 
 NEIGHBORHOOD_QUERY = text("""
