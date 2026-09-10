@@ -12,18 +12,18 @@ Sankofa is a computational knowledge platform for Africa. The reference point is
 
 The core complaint Sankofa exists to answer: general-purpose tools like Wolfram Alpha, when pushed into a specific domain like African health research, degrade into returning lists of papers instead of computed answers. A real user — a microbiology/biostatistics PhD student at Covenant University, Sankofa's first target user — described exactly this: she asked Wolfram a health question and got back sources to dig through herself, the same failure mode as a RAG chatbot. Sankofa's job is to have already done that digging, weighed the evidence, and return a synthesized, sourced, confidence-rated answer.
 
-**North star:** *Sankofa should reason like a human does.* Not just retrieve facts, but chain them together, weigh evidence instead of collecting it uncritically, and know the difference between "this is false," "this is unknown," and "this hasn't been looked at yet."
+**North star:** _Sankofa should reason like a human does._ Not just retrieve facts, but chain them together, weigh evidence instead of collecting it uncritically, and know the difference between "this is false," "this is unknown," and "this hasn't been looked at yet."
 
 **First domain:** Healthcare.
 
 ### Sankofa Engine — Layers
 
-| Layer | Name | Status | What it does |
-|-------|------|--------|-------------|
-| 1 | Knowledge Foundation | ✅ Complete | Data ingestion and database. WHO, OpenAlex, PubMed, ChEMBL pipelines. Entities and relationships, confidence tiers, evidence weighing. |
-| 2 | Computational Symbolic Engine | 🔄 In progress | Reasoning over the knowledge graph using recursive CTEs. weighing.py — weighs confidence and evidence counts. |
-| 3 | AI Layer (Litsi) | ⏳ Next | Interprets and explains what the engine computes. RAG pipeline connecting Claude API to PostgreSQL. Architecturally distinct from the symbolic core — embeddings belong to Litsi, not to Sankofa's computation engine. |
-| 4 | Ùmà Layer | 🔮 Final | Formalizes indigenous knowledge as computable reasoning. May use a logic-programming layer (pyDatalog or kanren) on top of the CTE foundation. |
+| Layer | Name                          | Status         | What it does                                                                                                                                                                                                           |
+| ----- | ----------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Knowledge Foundation          | ✅ Complete    | Data ingestion and database. WHO, OpenAlex, PubMed, ChEMBL pipelines. Entities and relationships, confidence tiers, evidence weighing.                                                                                 |
+| 2     | Computational Symbolic Engine | 🔄 In progress | Reasoning over the knowledge graph using recursive CTEs. weighing.py — weighs confidence and evidence counts.                                                                                                          |
+| 3     | AI Layer (Litsi)              | ⏳ Next        | Interprets and explains what the engine computes. RAG pipeline connecting Claude API to PostgreSQL. Architecturally distinct from the symbolic core — embeddings belong to Litsi, not to Sankofa's computation engine. |
+| 4     | Ùmà Layer                     | 🔮 Final       | Formalizes indigenous knowledge as computable reasoning. May use a logic-programming layer (pyDatalog or kanren) on top of the CTE foundation.                                                                         |
 
 ### Long-Term Domain Scope
 
@@ -102,14 +102,13 @@ sankofa/                    (repo root)
 **entity_sources**
 `id, entity_id, source_name, source_url, timestamps` — provenance trail for entities.
 
-**relationship_sources** *(new — added mid-project, see §5)*
+**relationship_sources** _(new — added mid-project, see §5)_
 `id, relationship_id, source_name, source_url, confidence (this specific source's own rating), context, timestamps` — provenance trail for relationships, mirrors entity_sources.
 
 **relationship_types**
 Lives in the DB, not an enum. 50+ seeded relationships across domains: pathology, epidemiology, pharmacology, molecular, ethnomedicine, clinical, genetics, institutional, general. Includes `causes`, `treats`, `traditionally_treats`, `prevalent_in`, `studied_by`, `protective_against`, `structurally_similar_to`, and more — see `data/relationship_types.py` for the full list.
 
 **Other tables (not yet populated by any ingestion):** `entity_names`, `entity_people`.
-
 
 **ingestion_coverage**
 `id, domain, disease_name, source_name, relationship_type, last_ingested_at` — tracks which (disease, source, relationship_type) combinations have been ingested. Enables three-state epistemic awareness (§9) at relationship-type granularity. Unique constraint `uq_disease_source_reltype` on `(disease_name, source_name, relationship_type)`. Populated by each ingestion pipeline via `record_coverage()` in `data/seed.py`, once per relationship type actually touched in a run.
@@ -125,6 +124,7 @@ Lives in the DB, not an enum. 50+ seeded relationships across domains: pathology
 All ingestions follow the same three-stage pattern: **extract → transform → load.** Idempotent by design — safe to re-run.
 
 ### WHO GHO — ✅ Complete
+
 - Source: `ghoapi.azureedge.net/api/`
 - Countries: NGA, GHA, KEN, ETH, ZAF, UGA, TZA, CMR, SEN, CIV
 - Indicators live: Malaria, HIV, Tuberculosis, Child Mortality, Maternal Mortality, Pneumonia
@@ -132,6 +132,7 @@ All ingestions follow the same three-stage pattern: **extract → transform → 
 - Produces: disease entities, statistic entities (one per country/year), region entities, `measures` and `prevalent_in` relationships
 
 ### OpenAlex — ✅ Complete
+
 - Source: `api.openalex.org/works` — replaced AJOL (no functioning AJOL API exists)
 - Requires a free API key (`api_key` param) — OpenAlex introduced usage-based pricing; unauthenticated requests get a small one-time credit only. Free key = $1/day budget, more than sufficient for this project's scale.
 - Filter uses `title.search.exact` (not `title.search` — the plain `.search` variant caused persistent 504 timeouts when combined with continent/open-access/year filters; `.search.exact` is the cheaper substring-match path)
@@ -141,6 +142,7 @@ All ingestions follow the same three-stage pattern: **extract → transform → 
 - Cap: 500 papers per disease per run, cursor-paginated
 
 ### PubMed — ✅ Complete
+
 - Source: NCBI E-utilities (ESearch → EFetch, two-step, XML not JSON)
 - Query filter restricts to papers with a real African country name in an author's `[Affiliation]` field — confirmed necessary after a false positive was caught in testing (a Thailand-authored paper about peacekeepers in South Sudan matched a naive `AND Africa` search)
 - `AFRICAN_COUNTRY_NAMES` must be **length-sorted, longest first**, before any substring scan — confirmed necessary because "Niger" is a substring of "Nigeria" and would otherwise mismatch real Nigerian-authored papers
@@ -151,21 +153,23 @@ All ingestions follow the same three-stage pattern: **extract → transform → 
 - `run_pubmed_ingestion()` and `run_pubmed()` (the per-disease and full-vocabulary orchestrators) live in `data/seed.py`, not in `pubmed.py` — same separation of concerns as `who.py`/`openalex.py`
 
 ### ChEMBL — ✅ Complete
+
 - Source: `ebi.ac.uk/chembl/api/data/` — REST, JSON, paginated (`limit`/`offset`, max limit 1000, `page_meta` block gives `total_count` and `next`)
 - Key endpoints confirmed: `/molecule` (compound data, `max_phase` field for approval status), `/mechanism` (drug → mechanism of action → target, e.g. `mechanism?molecule_chembl_id=CHEMBL998`), `/target` (searchable by name), `/activity` (bioactivity measurements, IC50/Ki values — 13M+ rows, must be filtered tightly, never pulled unfiltered)
 - Purpose: populates currently-empty relationship types `targets`, `inhibits`, `binds_to`, `derived_from` — real pharmacological mechanism data, not just "drug X exists"
 
-
 ### Scope decision (locked)
+
 No further new data sources after ChEMBL. Europe PMC was on the original roadmap but has been deliberately dropped — the priority now is finishing ChEMBL and moving straight into the Computational Symbolic Engine (Layer 2). Ethnomedicine-focused ingestion (§7) remains the identified strategic gap but is explicitly deferred past the engine, not before it — "build fast" means no more dataset detours until there's a working reasoning layer.
 
 ---
 
 ## 5. The Evidence-Weighing Redesign (major architectural fix)
 
-**The problem, caught mid-project:** the original `load()` logic skipped any entity or relationship that already existed. This meant confidence got permanently frozen at whatever the *first* paper contributed — if paper #1 was a weak case report and papers #2–50 were strong RCTs all confirming the same fact, the relationship stayed at confidence 1 forever. This directly contradicted the north star: a human's confidence in a claim grows as independent evidence accumulates: this system's didn't.
+**The problem, caught mid-project:** the original `load()` logic skipped any entity or relationship that already existed. This meant confidence got permanently frozen at whatever the _first_ paper contributed — if paper #1 was a weak case report and papers #2–50 were strong RCTs all confirming the same fact, the relationship stayed at confidence 1 forever. This directly contradicted the north star: a human's confidence in a claim grows as independent evidence accumulates: this system's didn't.
 
 **The fix:**
+
 - Added `evidence_count` to `entities` and `entity_relationships`
 - Added the new `relationship_sources` table (relationships previously had no provenance trail at all — only entities did)
 - Changed `load()` from skip-on-duplicate to strengthen-on-new-evidence:
@@ -203,10 +207,11 @@ Also currently unpopulated: the genetic/protective layer (`protective_against`, 
 
 ## 8. Business Model & Distribution
 
-**The core pricing logic:** Sankofa does not sell facts — every underlying source (WHO GHO, OpenAlex, PubMed, eventually ChEMBL) is free and public. What Sankofa sells is the *time* a researcher would otherwise spend finding, cross-referencing, and weighing all of that themselves. Same model as Wolfram Alpha Pro: the math was never scarce, the computation and synthesis is what people pay for. Confidence tiers and `evidence_count` aren't just architecture — they're the visible receipt proving the synthesis work was actually done, which is the entire monetization argument made concrete.
+**The core pricing logic:** Sankofa does not sell facts — every underlying source (WHO GHO, OpenAlex, PubMed, eventually ChEMBL) is free and public. What Sankofa sells is the _time_ a researcher would otherwise spend finding, cross-referencing, and weighing all of that themselves. Same model as Wolfram Alpha Pro: the math was never scarce, the computation and synthesis is what people pay for. Confidence tiers and `evidence_count` aren't just architecture — they're the visible receipt proving the synthesis work was actually done, which is the entire monetization argument made concrete.
 
 **Three product surfaces, mapped to what's actually worth paying for:**
-- **Query Interface** — likely stays free. Charging just to *ask* a question when the raw evidence is public contradicts Sankofa's own "accessible, African price points" positioning, and is what gets first users like the Covenant University researcher in the door.
+
+- **Query Interface** — likely stays free. Charging just to _ask_ a question when the raw evidence is public contradicts Sankofa's own "accessible, African price points" positioning, and is what gets first users like the Covenant University researcher in the door.
 - **Research Notebook + assistant** — the primary paid surface. Value is saved time and a structured working environment around computed answers, not exclusive access to facts.
 - **Community / Learning Centre** — mentorship and researcher connection is the one truly scarce resource (people's time and attention, unlike facts, isn't abundant); freemium for learning content.
 
@@ -238,9 +243,9 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 **Immediate (locked, no further additions):** ChEMBL ingestion → straight into the Computational Symbolic Engine (Layer 2). PubMed is done; Europe PMC has been deliberately dropped from the plan; ethnomedicine-targeted ingestion is deferred until after the engine exists, not before.
 
-**Current status (July 2026):** paused on heavy implementation to close a foundational gap — working through Charles Petzold's *Code* to understand what Python and the underlying hardware are actually doing, rather than continuing to translate pseudocode into syntax without full comprehension. Still coding in small amounts (bug fixes, small additions) during this period, not fully stopped. This directly feeds the eventual C/CPython-internals work needed for OpenShark later — not a detour from the long-term arc, front-loaded foundation for it.
+**Current status (July 2026):** paused on heavy implementation to close a foundational gap — working through Charles Petzold's _Code_ to understand what Python and the underlying hardware are actually doing, rather than continuing to translate pseudocode into syntax without full comprehension. Still coding in small amounts (bug fixes, small additions) during this period, not fully stopped. This directly feeds the eventual C/CPython-internals work needed for OpenShark later — not a detour from the long-term arc, front-loaded foundation for it.
 
-**After ChEMBL:** Computational Symbolic Engine (Layer 2) — recursive CTEs + plain Python. This is where the three-state epistemic awareness requirement (§9) gets implemented, and where confidence/evidence_count actually get *used* in synthesized answers rather than just stored. Code lives in `computation/` (internal codename; the engine itself is Layer 2, not a separate "SL4" product).
+**After ChEMBL:** Computational Symbolic Engine (Layer 2) — recursive CTEs + plain Python. This is where the three-state epistemic awareness requirement (§9) gets implemented, and where confidence/evidence_count actually get _used_ in synthesized answers rather than just stored. Code lives in `computation/` (internal codename; the engine itself is Layer 2, not a separate "SL4" product).
 
 **After the engine:** frontend, then Litsi (Layer 3) — the AI layer (RAG pipeline connecting Claude API to PostgreSQL), kept architecturally distinct from the symbolic core. Embeddings belong to Litsi, not to the computation engine — this separation is deliberate and must be maintained.
 
@@ -262,13 +267,31 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 **Colours:** Charcoal `#1A1A1A`, Ochre `#8B4513`, Copper `#B87333`, Gold `#C9A84C`, Ivory `#F5F0E8`, Ash `#6B6355`
 **Typography:** Cormorant Garamond / Crimson Pro / Source Code Pro
-**Tagline:** *"Se wo were fi na wosankofa a yenkyi."*
+**Tagline:** _"Se wo were fi na wosankofa a yenkyi."_
 
 ---
 
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-09-10 — relationship_types.py data loss recovered from git history
+
+**Decided:** The full 63-entry `relationship_types_data` list, truncated
+to 6 entries by the "recovered relationships file" commit (63a0c3d,
+2026-08-20) during the Omarchy OS migration, has been restored from the
+parent commit (241dc83). The four names present in both the truncated
+and original versions — `treats`, `inhibits`, `targets`, `derived_from`,
+`binds_to` — keep the newer, ChEMBL-aligned descriptions rather than
+reverting to the pre-ChEMBL originals, since those were the more
+recently and deliberately written versions.
+**Why:** git history preserved the full file even though the working
+tree and local Postgres DB did not survive the OS switch — the deletion
+was in a diff, not gone. No memory-based reconstruction was needed.
+**Rules out:** Rebuilding the list from partial conversational memory
+(would have covered ~20 of 63 entries, incomplete and unreliable).
+**Unblocks:** `seed_relationship_types` can be re-run against the fresh
+Omarchy Postgres DB with the complete vocabulary intact.
 
 ### 2026-09-06 — Item 4 (two-hop epistemic resolution): forward/backward code-complete, live verification partially blocked by data gap
 
@@ -293,6 +316,7 @@ real and currently biting, not just theoretical -- caught via live
 verification, not code review.
 
 **Verification status:**
+
 - Branch (a) hop1 uncovered -> UNCHARTED: CONFIRMED against live data
   (`buruli ulcer` + `activates`)
 - Branch (b) hop1 covered, zero rows -> KNOWABLY_ABSENT: CONFIRMED
@@ -683,9 +707,11 @@ stays inside the "no new sources after ChEMBL" lock (§4).
 
 This produces a real 3-hop derived chain instead of the broken 2-hop
 one:
+
 ```
 molecule --inhibits--> protein --expressed_by--> organism --causes--> disease
 ```
+
 Every premise is independently sourced and load-bearing; the existing
 depth/decay math (`MAX_DEPTH`, `DECAY = 0.75`, min-of-premises
 tiering) still applies unchanged.
@@ -708,6 +734,7 @@ Layer 2 composition rule, permanently. `belongs_to` as the bridge
 relationship name.
 
 **Not yet done:**
+
 - Seed `expressed_by` into `relationship_types`
 - Widen `chembl.py` extract/transform/load to capture the `organism`
   field off the existing target fetch and write the new relationship
@@ -818,11 +845,13 @@ genuinely succeeded — printing a distinguishing message either way so
 failures are visible in logs, not just swallowed.
 
 **Status — CONFIRMED via pasted-back file review:**
+
 - seed.py — fixed and verified (including a real indentation bug
   introduced mid-fix, caught and corrected)
 
 **Status — fix given, NOT YET verified via paste-back (do this first
 in the next session):**
+
 - pubmed.py — extract() and run_pubmed_ingestion()
 - who.py — extract_who_data()
 - openalex.py — extract_openalex_data() and run_openalex_ingestion()
@@ -852,6 +881,7 @@ tracking, since it looks authoritative while being wrong.
 **Decided:** Four bugs fixed across chembl.py and openalex.py, found via
 line-by-line review checked against real API responses/docs, not assumed
 field names.
+
 - chembl.py: molecule/mechanism/target fetch block was indented inside
   the `for mesh_id in mesh_ids:` loop, causing redundant refetching for
   multi-mesh-id diseases (tuberculosis, dengue, leishmaniasis). Dedented
@@ -887,7 +917,6 @@ entities first: `SELECT entity_type, COUNT(*) FROM entities WHERE
 contributor = 'OpenAlex' GROUP BY entity_type` — likely skewed 100%
 Epidemiological pre-fix.
 
-
 ### 2026-07-21 — Inference layer: plain Python rule functions, not DL/Datalog
 
 **Decided:** Layer 2/3 reasoning is implemented as hand-written Python
@@ -899,6 +928,7 @@ row out.
 
 Confidence for derived facts uses a continuous score alongside the
 existing discrete tier:
+
 - `TIER_SCORE = {1: 0.3, 2: 0.6, 3: 1.0}` (Traditional/Emerging/Established)
 - `combined = min(score(premise_a), score(premise_b))` — a chain is
   only as strong as its weakest premise
@@ -910,6 +940,7 @@ existing discrete tier:
   confidence laundering across chains.
 
 Cycle/runaway protection, three independent guards:
+
 - `MAX_DEPTH = 3` global constant — facts at max depth aren't used
   as premises for further derivation
 - Each derived fact stores `derived_from: list[fact_id]`; before
@@ -937,7 +968,6 @@ the existing entity_relationships schema — first rule to implement:
 `inhibits + causes → treats` (derived), tested on the malaria/anemia
 slice before generalizing to a rule-registration framework.
 
-
 ### 2026-07-19 — Recursive CTE reasoning engine: dumb traversal, Python interpretation, cycle/depth/row guards
 
 **Decided:** The Computational Symbolic Engine (Layer 2) multi-hop reasoning uses a recursive CTE
@@ -963,8 +993,6 @@ table that doesn't exist yet.
 
 **Unblocks:** The recursive CTE query can now be built — parameterized
 depth, row-capped, cycle-guarded.
-
-
 
 ### 2026-07-18 — SL4 architecture documented
 
@@ -1016,8 +1044,6 @@ a property of execution model, not maintenance status.
 scoped.
 **Unblocks:** Engine build proceeds with no outstanding tooling questions.
 
-
-
 ### 2026-07-18 — Engine built on Postgres recursive CTEs + plain Python, not a logic-programming engine
 
 **Decided:** The Computational Symbolic Engine (Layer 2) multi-hop traversal uses Postgres `WITH RECURSIVE` CTEs.
@@ -1039,7 +1065,6 @@ engineering cost, no added reasoning power over what's already decided
 here).
 **Unblocks:** Engine build can proceed without further tooling evaluation.
 
-
 ### 2026-07-18 — entity_sources / relationship_sources need author + title fields
 
 **Decided:** Both `entity_sources` and `relationship_sources` will gain
@@ -1056,10 +1081,10 @@ against in favor of a full database truncate and clean re-ingestion instead
 structured object and the research-notebook/article feature both become
 possible.
 
-
 ### 2026-07-17 — ChEMBL load()/transform() rewritten to match real schema; entity dedup key decided per-pipeline
 
 **Decided:**
+
 - ChEMBL's load() rewritten against the real models (EntityRelations/entity_relations,
   RelationshipSource.relationship_id, no internal_id field anywhere).
 - ChEMBL entity dedup key: normalized (lowercased, trimmed) name + domain (exact).
@@ -1080,10 +1105,11 @@ possible.
 **Why:** entity_type was excluded from ChEMBL's dedup key because the same disease
 can already carry different entity_type values across OpenAlex ("Clinical" vs
 "Epidemiological" vs "Indigenous", assigned per-paper by determine_entity_type())
+
 - including it in the match would fragment evidence_count across rows that
-represent the same real-world entity. WHO was left alone because it already works
-in production and this session's principle was fixing what's broken, not touching
-what isn't.
+  represent the same real-world entity. WHO was left alone because it already works
+  in production and this session's principle was fixing what's broken, not touching
+  what isn't.
 
 **Known, deliberately unresolved issue (not fixed, just documented):** WHO's disease
 entities use domain="epidemiology"; OpenAlex/PubMed use domain="healthcare" for the
@@ -1109,7 +1135,6 @@ until that clears.
 **Next:** Move to Computational Symbolic Engine (Layer 2) while ChEMBL is
 externally blocked - per roadmap, this was next after ingestion regardless.
 
-
 ### 2026-07-16 — ChEMBL load() rewritten to match real schema (EntityRelations, no internal_id, normalized entity dedup)
 
 **Decided:** The ChEMBL load() pseudocode was rewritten to match the real
@@ -1133,7 +1158,6 @@ internal_id attributes on ORM objects for linking sources to relationships.
 **Unblocks:** ChEMBL load() can be finalized once Gemini's corrected
 pseudocode is reviewed. The normalized-name dedup rule applies to all
 ingestions going forward, not just ChEMBL.
-
 
 ### 2026-07-14 — Sankofa funding, team, and governance model locked
 
