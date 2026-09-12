@@ -275,6 +275,78 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
 
+### 2026-09-12 — Post-Omarchy re-verification: Steps 1-4 and Item 4
+
+branches (a)/(b) reconfirmed; (c)/(d) re-confirmed blocked for the
+original reason, not a new one
+
+**Decided:** Full six-step re-verification checklist (§13, defined
+after the Omarchy migration) run against the freshly re-ingested
+database (WHO/OpenAlex/PubMed/ChEMBL, 63-entry relationship_types
+restored):
+
+- relationship_types count = 63, confirmed
+- epistemic.py three-state resolution confirmed correct on all three
+  cases (malaria+treats -> KNOWN, malaria+measures -> KNOWABLY_ABSENT,
+  malaria+traditionally_treats -> UNCHARTED). Raw numbers shifted from
+  pre-migration (evidence_count 449 vs. 606, 114 vs. ~116 corroborating
+  rows) -- expected, reflects a fresh API pull at a different point in
+  time, not a regression.
+- contradictions.py: 8,725 relationships checked, 0 contradictions, 0
+  bidirectional pairs -- confirmed still inert on fresh data.
+- weigh_chain() grouping: confidence 3, evidence_count 449 -- matches
+  epistemic.py's aggregate exactly. Corroboration math confirmed
+  correct on fresh data.
+- Item 4 branch (a) buruli ulcer+activates -> UNCHARTED, branch (b)
+  cholera+treats -> KNOWABLY_ABSENT -- both match pre-migration exactly.
+
+**Item 4 branches (c)/(d):** tested this session against two
+additional anchor types beyond the original disease-only framing --
+an organism anchor (plasmodium falciparum --causes--> Malaria) and a
+statistic anchor (Malaria Est Incidence ZAF 2019 --measures--> Malaria).
+Both hit the identical wall as the original 2026-09-06 finding:
+has_coverage() only matches disease-shaped names against
+ingestion_coverage.disease_name, so any two-hop chain whose hop1
+source is not itself a disease entity reports UNCHARTED regardless of
+whether real data/coverage exists underneath. This confirms the
+2026-09-06 scoping was correct -- no anchor type circumvents the need
+for a genuine disease-to-disease edge, which still doesn't exist in
+the graph (aside from the marburg virus self-loop artifact, still not
+treated as valid test data).
+
+**Retracted same-session:** initially misdiagnosed the statistic-anchor
+result as a new, distinct blocker (has_coverage() failing to resolve a
+statistic entity back to its parent disease). Retracted after the
+organism-anchor test failed identically -- the single real cause is
+has_coverage()'s disease-only matching, already documented 2026-09-06.
+Lesson: a plausible one-off finding should be checked against a second
+independent case before being logged as new, not pattern-matched from
+a single failure.
+
+**Also reconfirmed (test-script bugs, not production bugs):** ad-hoc
+verification scripts this session twice re-tripped over already-
+documented lessons -- entity name case sensitivity (Malaria, not
+malaria) and treats' storage direction (drug/molecule --treats-->
+disease, so malaria is the to_entity, not from_entity). Both are
+already in CONTEXT.md's "Key learnings" section; re-confirms the
+value of checking real production query code before writing a new
+test script, rather than assuming a query shape from its plain-English
+name.
+
+**Update:** Step 6 (ChEMBL coverage attribution) run and confirmed --
+binds_to/expressed_by/inhibits/targets all correctly attributed to
+molecule/protein/target names; treats correctly attributed to disease
+names. Full six-step re-verification checklist is now complete.
+
+**Rules out:** Nothing architectural -- no code changes made this
+session, purely verification.
+
+**Unblocks:** Layer 2's corroboration, contradiction, and epistemic
+three-state logic are confirmed sound against the post-migration
+database. Item 4 (c)/(d) remains the sole open item in that set,
+genuinely blocked on real disease-to-disease ingestion data -- not a
+newly discovered gap, just doubly confirmed.
+
 ### 2026-09-10 — relationship_types.py data loss recovered from git history
 
 **Decided:** The full 63-entry `relationship_types_data` list, truncated
