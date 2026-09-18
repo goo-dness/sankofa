@@ -2,29 +2,33 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
-from app.config import settings
+
 import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.http_utils import get_with_retry
 from ingestions.openalex import (
-    DISEASE_VOCABULARY,
-    TREATMENT_VOCABULARY,
-    determine_entity_type,
-    CAUSAL_AGENT_VOCABULARY,
     CAUSAL_AGENT_ENTITY_TYPE,
+    CAUSAL_AGENT_VOCABULARY,
+    DISEASE_VOCABULARY,
+    DUAL_GENETIC_TERMS,
+    GENETIC_FACTOR_ENTITY_TYPE,
+    GENETIC_PROTECTIVE_VOCABULARY,
     ORGANISM_NAME_MAP,
+    TREATMENT_VOCABULARY,
+    VECTOR_TRANSMISSION_VOCABULARY,
+    determine_entity_type,
+    filter_redundant_causal_agent_matches,
     normalize_organism_name,
-    filter_redundant_causal_agent_matches
 )
 from models.entities import Entity
 from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
-
 
 PUBMED_ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -495,7 +499,7 @@ def transform(raw_records, disease_name):
                 "source_url": paper_source_url,
                 "source_name": "PubMed",
                 "source_author": first_author,
-                "source_title": ArticleTitle_TEXT
+                "source_title": ArticleTitle_TEXT,
             }
             relationships.append(prevalent_relationship_dict)
 
@@ -531,7 +535,7 @@ def transform(raw_records, disease_name):
                         "confidence": confidence_tier_for_this_paper,
                         "context": ArticleTitle_TEXT,
                         "source_author": first_author,
-                        "source_title": ArticleTitle_TEXT
+                        "source_title": ArticleTitle_TEXT,
                     }
                     sources.append(treatment_entity_source_record)
 
@@ -546,7 +550,7 @@ def transform(raw_records, disease_name):
                         "source_url": paper_source_url,
                         "source_name": "PubMed",
                         "source_author": first_author,
-                        "source_title": ArticleTitle_TEXT
+                        "source_title": ArticleTitle_TEXT,
                     }
                     relationships.append(treats_relationship_dict)
 
@@ -554,7 +558,9 @@ def transform(raw_records, disease_name):
             for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
                 if causal_agent_term in concatenated_abstract_string_lower:
                     found_causal_agents.append(causal_agent_term)
-            found_causal_agents = filter_redundant_causal_agent_matches(found_causal_agents)
+            found_causal_agents = filter_redundant_causal_agent_matches(
+                found_causal_agents
+            )
 
             for actual_causal_agent in found_causal_agents:
                 canonical_name = normalize_organism_name(actual_causal_agent)
@@ -593,6 +599,27 @@ def transform(raw_records, disease_name):
                 causes_relationship_dict["source_title"] = ArticleTitle_TEXT
                 relationships.append(causes_relationship_dict)
 
+            # Genetic / Protective matching
+            found_genetic_terms = []
+            for term in GENETIC_PROTECTIVE_VOCABULARY.get(disease_name, []):
+                if term in concatenated_abstract_string_lower:
+                    found_genetic_terms.append(term)
+
+            found_genetic_terms = filter_redundant_causal_agent_matches(
+                found_genetic_terms
+            )
+
+            for actual_term in found_genetic_terms:
+                genetic_entity = {
+                    "name": actual_term,
+                    "domain": "healthcare",
+                    "entity_type": GENETIC_FACTOR_ENTITY_TYPE,
+                    "region": region_name,
+                    "expression": ArticleTitle_TEXT,
+                    "confidence": confidence_tier_for_this_paper,
+                    "contributor": "PubMed",
+                }
+                entities.append(genetic_entity)
         except Exception as error:
             print(
                 f"Warning: Skipping malformed PubMed record (PMID: {current_pmid} for {disease_name} during transform: {error}"
@@ -681,7 +708,7 @@ def load(entities, relationships, sources, db_session):
                         source_name=source_name,
                         source_url=source_url,
                         source_author=source_entry_dict.get("source_author"),
-                        source_title=source_entry_dict.get("source_title")
+                        source_title=source_entry_dict.get("source_title"),
                     )
                     db_session.add(new_entity_source)
 
@@ -764,7 +791,10 @@ def load(entities, relationships, sources, db_session):
                     )
                     if relationship_to_update is not None:
                         relationship_to_update.evidence_count += 1
-                        relationship_to_update.confidence = max(relationship_confidence_from_paper, relationship_to_update.confidence)
+                        relationship_to_update.confidence = max(
+                            relationship_confidence_from_paper,
+                            relationship_to_update.confidence,
+                        )
                         db_session.add(relationship_to_update)
                     else:
                         print(
@@ -776,26 +806,26 @@ def load(entities, relationships, sources, db_session):
 
             else:  # Relationship does not exist, create it fresh
                 new_relationship = EntityRelations(
-                        from_entity_id=from_id,
-                        to_entity_id=to_id,
-                        relationship_id=relationship_type_id,
-                        confidence=relationship_confidence_from_paper,
-                        context=relationship_context_from_paper,
-                        evidence_count=1,
+                    from_entity_id=from_id,
+                    to_entity_id=to_id,
+                    relationship_id=relationship_type_id,
+                    confidence=relationship_confidence_from_paper,
+                    context=relationship_context_from_paper,
+                    evidence_count=1,
                 )
                 db_session.add(new_relationship)
                 db_session.flush()
 
                 # Create the first RelationshipSource record for this new relationship
                 new_relationship_source_entry = RelationshipSource(
-                        relationship_id=new_relationship.id,
-                        source_name=relationship_source_name,
-                        source_url=relationship_source_url,
-                        confidence=relationship_confidence_from_paper,
-                        context=relationship_context_from_paper,
-                        source_author=relationship_dict.get("source_author"),
-                        source_title=relationship_dict.get("source_title"),
-                    )
+                    relationship_id=new_relationship.id,
+                    source_name=relationship_source_name,
+                    source_url=relationship_source_url,
+                    confidence=relationship_confidence_from_paper,
+                    context=relationship_context_from_paper,
+                    source_author=relationship_dict.get("source_author"),
+                    source_title=relationship_dict.get("source_title"),
+                )
                 db_session.add(new_relationship_source_entry)
         db_session.commit()
         print("Load complete")
@@ -814,9 +844,13 @@ def run_pubmed_ingestion(disease_name):
 
     if not raw_records:
         if extract_succeeded:
-            print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
+            print(
+                f"No records found for {disease_name}--- extraction completed successfully, no data exists."
+            )
         else:
-            print(f"No records found for {disease_name}--- extraction FAILED, this is NOT a verified absence, do not treat as checked")
+            print(
+                f"No records found for {disease_name}--- extraction FAILED, this is NOT a verified absence, do not treat as checked"
+            )
         return extract_succeeded, set()
     entities, relationships, sources = transform(raw_records, disease_name)
     db_session = SessionLocal()

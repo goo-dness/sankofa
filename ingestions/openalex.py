@@ -1,11 +1,11 @@
 import time
 from typing import Any, Dict, List, Tuple
 
-from app.config import settings
 import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.http_utils import get_with_retry
 from models.entities import Entity
@@ -13,11 +13,13 @@ from models.entity_relationships import EntityRelations
 from models.entity_sources import EntitySource
 from models.relations_type import RelationshipTypes
 from models.relationship_sources import RelationshipSource
+
 # CONSTANTS
 OPENALEX_URL = "https://api.openalex.org/works"
 PER_PAGE = 50
 CAP = 500
 CAUSAL_AGENT_ENTITY_TYPE = "CausalAgent"
+GENETIC_FACTOR_ENTITY_TYPE = "GeneticFactor"
 DISEASE_VOCABULARY = [
     "malaria",
     "HIV",
@@ -252,41 +254,163 @@ TREATMENT_VOCABULARY = {
     "rift valley fever": ["ribavirin", "supportive care"],
 }
 CAUSAL_AGENT_VOCABULARY = {
-    "malaria": ["plasmodium falciparum", "plasmodium vivax", "anopheles mosquito", "malaria parasite", "anopheles", "plasmodium"],
+    "malaria": [
+        "plasmodium falciparum",
+        "plasmodium vivax",
+        "anopheles mosquito",
+        "malaria parasite",
+        "anopheles",
+        "plasmodium",
+    ],
     "HIV": ["human immunodeficiency virus", "hiv-1", "hiv-2", "retrovirus"],
-    "tuberculosis": ["mycobacterium tuberculosis", "m. tuberculosis", "tubercle bacillus", "mycobacterium"],
-    "pneumonia": ["streptococcus pneumoniae", "pneumococcus", "haemophilus influenzae", "respiratory syncytial virus", "klebsiella pneumoniae"],
+    "tuberculosis": [
+        "mycobacterium tuberculosis",
+        "m. tuberculosis",
+        "tubercle bacillus",
+        "mycobacterium",
+    ],
+    "pneumonia": [
+        "streptococcus pneumoniae",
+        "pneumococcus",
+        "haemophilus influenzae",
+        "respiratory syncytial virus",
+        "klebsiella pneumoniae",
+    ],
     "cholera": ["vibrio cholerae", "v. cholerae", "cholera toxin"],
-    "typhoid fever": ["salmonella typhi", "salmonella enterica serovar typhi", "s. typhi"],
-    "meningitis": ["neisseria meningitidis", "meningococcus", "streptococcus pneumoniae", "haemophilus influenzae type b", "hib"],
+    "typhoid fever": [
+        "salmonella typhi",
+        "salmonella enterica serovar typhi",
+        "s. typhi",
+    ],
+    "meningitis": [
+        "neisseria meningitidis",
+        "meningococcus",
+        "streptococcus pneumoniae",
+        "haemophilus influenzae type b",
+        "hib",
+    ],
     "hepatitis B": ["hepatitis b virus", "hbv"],
     "hepatitis C": ["hepatitis c virus", "hcv"],
-    "diarrhoeal disease": ["rotavirus", "escherichia coli", "enterotoxigenic e. coli", "shigella", "vibrio cholerae", "cryptosporidium"],
+    "diarrhoeal disease": [
+        "rotavirus",
+        "escherichia coli",
+        "enterotoxigenic e. coli",
+        "shigella",
+        "vibrio cholerae",
+        "cryptosporidium",
+    ],
     "yellow fever": ["yellow fever virus", "flavivirus", "aedes aegypti"],
     "dengue fever": ["dengue virus", "denv", "aedes aegypti", "aedes albopictus"],
     "ebola": ["ebola virus", "zaire ebolavirus", "filovirus"],
     "mpox": ["monkeypox virus", "mpox virus", "orthopoxvirus"],
-    "schistosomiasis": ["schistosoma mansoni", "schistosoma haematobium", "schistosoma japonicum", "freshwater snail"],
+    "schistosomiasis": [
+        "schistosoma mansoni",
+        "schistosoma haematobium",
+        "schistosoma japonicum",
+        "freshwater snail",
+    ],
     "onchocerciasis": ["onchocerca volvulus", "blackfly", "simulium"],
-    "lymphatic filariasis": ["wuchereria bancrofti", "brugia malayi", "brugia timori", "mosquito vector"],
+    "lymphatic filariasis": [
+        "wuchereria bancrofti",
+        "brugia malayi",
+        "brugia timori",
+        "mosquito vector",
+    ],
     "trachoma": ["chlamydia trachomatis"],
-    "trypanosomiasis": ["trypanosoma brucei", "tsetse fly", "trypanosoma brucei gambiense", "trypanosoma brucei rhodesiense"],
-    "leishmaniasis": ["leishmania parasite", "sandfly", "leishmania donovani", "phlebotomus"],
+    "trypanosomiasis": [
+        "trypanosoma brucei",
+        "tsetse fly",
+        "trypanosoma brucei gambiense",
+        "trypanosoma brucei rhodesiense",
+    ],
+    "leishmaniasis": [
+        "leishmania parasite",
+        "sandfly",
+        "leishmania donovani",
+        "phlebotomus",
+    ],
     "buruli ulcer": ["mycobacterium ulcerans"],
     "leprosy": ["mycobacterium leprae"],
     "guinea worm": ["dracunculus medinensis", "guinea worm larvae", "copepod"],
-    "soil-transmitted helminths": ["ascaris lumbricoides", "hookworm", "trichuris trichiura", "necator americanus"],
-    "sickle cell disease": ["hbb gene mutation", "hemoglobin s", "hbb gene", "beta globin gene", "point mutation", "valine substitution"],
-    "G6PD deficiency": ["g6pd gene mutation", "glucose-6-phosphate dehydrogenase deficiency", "x-linked mutation"],
-    "thalassaemia": ["hba gene mutation", "hbb gene mutation", "alpha globin gene deletion", "beta globin gene mutation"],
-    "malnutrition": ["micronutrient deficiency", "protein-energy deficiency", "vitamin a deficiency", "iron deficiency", "iodine deficiency", "undernutrition", "marasmus", "kwashiorkor"],
-    "neonatal sepsis": ["group b streptococcus", "escherichia coli", "klebsiella", "early-onset sepsis", "late-onset sepsis"],
-    "obstetric fistula": ["prolonged obstructed labour", "obstructed labor", "prolonged labor"],
-    "preeclampsia": ["placental insufficiency", "endothelial dysfunction", "angiogenic imbalance", "sflt-1", "vegf", "plgf"],
-    "stunting": ["chronic undernutrition", "micronutrient deficiency", "repeated infection", "poor maternal nutrition"],
-    "lassa fever": ["lassa virus", "arenavirus", "mastomys natalensis", "multimammate rat"],
-    "marburg virus": ["marburg virus", "filovirus", "rousettus aegyptiacus", "fruit bat"],
-    "rift valley fever": ["rift valley fever virus", "phlebovirus", "aedes mosquito", "culex mosquito"],
+    "soil-transmitted helminths": [
+        "ascaris lumbricoides",
+        "hookworm",
+        "trichuris trichiura",
+        "necator americanus",
+    ],
+    "sickle cell disease": [
+        "hbb gene mutation",
+        "hemoglobin s",
+        "hbb gene",
+        "beta globin gene",
+        "point mutation",
+        "valine substitution",
+    ],
+    "G6PD deficiency": [
+        "g6pd gene mutation",
+        "glucose-6-phosphate dehydrogenase deficiency",
+        "x-linked mutation",
+    ],
+    "thalassaemia": [
+        "hba gene mutation",
+        "hbb gene mutation",
+        "alpha globin gene deletion",
+        "beta globin gene mutation",
+    ],
+    "malnutrition": [
+        "micronutrient deficiency",
+        "protein-energy deficiency",
+        "vitamin a deficiency",
+        "iron deficiency",
+        "iodine deficiency",
+        "undernutrition",
+        "marasmus",
+        "kwashiorkor",
+    ],
+    "neonatal sepsis": [
+        "group b streptococcus",
+        "escherichia coli",
+        "klebsiella",
+        "early-onset sepsis",
+        "late-onset sepsis",
+    ],
+    "obstetric fistula": [
+        "prolonged obstructed labour",
+        "obstructed labor",
+        "prolonged labor",
+    ],
+    "preeclampsia": [
+        "placental insufficiency",
+        "endothelial dysfunction",
+        "angiogenic imbalance",
+        "sflt-1",
+        "vegf",
+        "plgf",
+    ],
+    "stunting": [
+        "chronic undernutrition",
+        "micronutrient deficiency",
+        "repeated infection",
+        "poor maternal nutrition",
+    ],
+    "lassa fever": [
+        "lassa virus",
+        "arenavirus",
+        "mastomys natalensis",
+        "multimammate rat",
+    ],
+    "marburg virus": [
+        "marburg virus",
+        "filovirus",
+        "rousettus aegyptiacus",
+        "fruit bat",
+    ],
+    "rift valley fever": [
+        "rift valley fever virus",
+        "phlebovirus",
+        "aedes mosquito",
+        "culex mosquito",
+    ],
 }
 TREATMENT_KEYWORDS = [
     "treatment",
@@ -317,9 +441,281 @@ ORGANISM_NAME_MAP = {
     "tubercle bacillus": "mycobacterium tuberculosis",
 }
 
+GENETIC_PROTECTIVE_VOCABULARY = {
+    "malaria": [
+        "sickle cell trait",
+        "hemoglobin s",
+        "hbs",
+        "g6pd deficiency",
+        "glucose-6-phosphate dehydrogenase deficiency",
+        "thalassaemia trait",
+        "alpha thalassaemia",
+        "beta thalassaemia",
+        "duffy negativity",
+        "duffy negative",
+        "fy gene",
+        "hemoglobin c",
+        "hbc",
+        "ovalocytosis",
+        "southeast asian ovalocytosis",
+    ],
+    "HIV": [
+        "ccr5 delta32",
+        "ccr5-delta32",
+        "ccr5 deletion",
+        "hla-b*57",
+        "hla-b57",
+        "hla-b*27",
+        "hla-b27",
+        "kir3dl1",
+        "apobec3g",
+        "trim5alpha",
+    ],
+    "tuberculosis": [
+        "nramp1",
+        "slc11a1",
+        "ifng",
+        "ifn-gamma",
+        "tnf",
+        "il12b",
+        "il-12b",
+        "vdr",
+        "vitamin d receptor",
+    ],
+    "pneumonia": [],
+    "cholera": [],
+    "typhoid fever": [
+        "hla-drb1",
+        "hla-drb1*04:05",
+    ],
+    "meningitis": [],
+    "hepatitis B": [
+        "hla-dp",
+        "hla-dq",
+        "ifnl3",
+        "il28b",
+    ],
+    "hepatitis C": [
+        "ifnl3",
+        "il28b",
+        "ifnl4",
+        "hla-dq",
+        "hla-dr",
+    ],
+    "diarrhoeal disease": [],
+    "yellow fever": [],
+    "dengue fever": [
+        "hla-a",
+        "hla-b",
+        "hla-dr",
+        "dc-sign",
+        "cd209",
+    ],
+    "ebola": [],
+    "mpox": [],
+    "schistosomiasis": [
+        "sm1",
+        "il13",
+        "il-13",
+        "stat6",
+    ],
+    "onchocerciasis": [],
+    "lymphatic filariasis": [],
+    "trachoma": [],
+    "trypanosomiasis": [],
+    "leishmaniasis": [
+        "nramp1",
+        "slc11a1",
+        "tnf",
+        "il10",
+        "il-10",
+    ],
+    "buruli ulcer": [],
+    "leprosy": [
+        "park2",
+        "pacrg",
+        "tnf",
+        "hla-dr",
+        "tlr1",
+        "tlr2",
+    ],
+    "guinea worm": [],
+    "soil-transmitted helminths": [],
+    "sickle cell disease": [
+        "hbb gene mutation",
+        "hemoglobin s",
+        "hbs",
+        "beta globin gene",
+        "valine substitution",
+        "point mutation",
+        "hbb",
+    ],
+    "G6PD deficiency": [
+        "g6pd gene mutation",
+        "glucose-6-phosphate dehydrogenase deficiency",
+        "x-linked mutation",
+        "g6pd a-",
+        "g6pd mediterranean",
+    ],
+    "thalassaemia": [
+        "hba gene mutation",
+        "hbb gene mutation",
+        "alpha globin gene deletion",
+        "beta globin gene mutation",
+        "alpha thalassaemia",
+        "beta thalassaemia",
+    ],
+    "malnutrition": [],
+    "neonatal sepsis": [],
+    "obstetric fistula": [],
+    "preeclampsia": [
+        "flt1",
+        "sflt-1",
+        "vegf",
+        "plgf",
+        "eng",
+        "endoglin",
+    ],
+    "stunting": [],
+    "lassa fever": [],
+    "marburg virus": [],
+    "rift valley fever": [],
+}
+
+VECTOR_TRANSMISSION_VOCABULARY = {
+    "malaria": [
+        "anopheles mosquito",
+        "anopheles gambiae",
+        "anopheles funestus",
+        "anopheles arabiensis",
+        "anopheles",
+        "mosquito vector",
+    ],
+    "HIV": [],
+    "tuberculosis": [],
+    "pneumonia": [],
+    "cholera": [],
+    "typhoid fever": [],
+    "meningitis": [],
+    "hepatitis B": [],
+    "hepatitis C": [],
+    "diarrhoeal disease": [],
+    "yellow fever": [
+        "aedes aegypti",
+        "aedes africanus",
+        "haemagogus",
+        "mosquito vector",
+    ],
+    "dengue fever": [
+        "aedes aegypti",
+        "aedes albopictus",
+        "aedes",
+        "mosquito vector",
+    ],
+    "ebola": [
+        "fruit bat",
+        "rousettus",
+        "pteropodidae",
+    ],
+    "mpox": [
+        "rodent",
+        "squirrel",
+        "giant pouched rat",
+        "dormouse",
+    ],
+    "schistosomiasis": [
+        "freshwater snail",
+        "biomphalaria",
+        "bulinus",
+        "oncomelania",
+        "snail intermediate host",
+    ],
+    "onchocerciasis": [
+        "blackfly",
+        "simulium",
+        "simulium damnosum",
+        "black fly",
+    ],
+    "lymphatic filariasis": [
+        "culex mosquito",
+        "aedes mosquito",
+        "anopheles mosquito",
+        "mosquito vector",
+        "culex quinquefasciatus",
+    ],
+    "trachoma": [
+        "musca sorbens",
+        "eye-seeking fly",
+    ],
+    "trypanosomiasis": [
+        "tsetse fly",
+        "glossina",
+        "glossina morsitans",
+        "glossina palpalis",
+        "tsetse",
+    ],
+    "leishmaniasis": [
+        "sandfly",
+        "phlebotomus",
+        "phlebotomus papatasi",
+        "sand fly",
+        "lutzomyia",
+    ],
+    "buruli ulcer": [],
+    "leprosy": [],
+    "guinea worm": [
+        "copepod",
+        "cyclops",
+        "water flea",
+    ],
+    "soil-transmitted helminths": [],
+    "sickle cell disease": [],
+    "G6PD deficiency": [],
+    "thalassaemia": [],
+    "malnutrition": [],
+    "neonatal sepsis": [],
+    "obstetric fistula": [],
+    "preeclampsia": [],
+    "stunting": [],
+    "lassa fever": [
+        "mastomys natalensis",
+        "multimammate rat",
+        "mastomys",
+    ],
+    "marburg virus": [
+        "rousettus aegyptiacus",
+        "fruit bat",
+        "egyptian fruit bat",
+    ],
+    "rift valley fever": [
+        "aedes mosquito",
+        "culex mosquito",
+        "aedes",
+        "culex",
+        "mosquito vector",
+    ],
+}
+
+DUAL_GENETIC_TERMS = {
+    "sickle cell trait",
+    "hemoglobin s",
+    "hbs",
+    "g6pd deficiency",
+    "glucose-6-phosphate dehydrogenase deficiency",
+    "thalassaemia trait",
+    "alpha thalassaemia",
+    "beta thalassaemia",
+    "duffy negativity",
+    "duffy negative",
+    "hemoglobin c",
+    "hbc",
+}
+
+
 def normalize_organism_name(raw_name: str) -> str:
     lowered = raw_name.lower().strip()
     return ORGANISM_NAME_MAP.get(lowered, lowered)
+
 
 def filter_redundant_causal_agent_matches(found_terms: list[str]) -> list[str]:
     """
@@ -335,6 +731,7 @@ def filter_redundant_causal_agent_matches(found_terms: list[str]) -> list[str]:
         if not is_substring_of_another:
             filtered.append(term)
     return filtered
+
 
 # Openalex stores abstracts as word-to-positions mapping, I rebuild the original sentence from that mapping
 def reconstruct_abstract(abstract_inverted_index: Dict[str, dict]) -> str:
@@ -458,7 +855,9 @@ def transform(
     for paper in raw_records:
         try:
             # Derive all fields we need
-            abstract_text = reconstruct_abstract(paper.get("abstract_inverted_index", {}))
+            abstract_text = reconstruct_abstract(
+                paper.get("abstract_inverted_index", {})
+            )
             confidence = determine_confidence(paper.get("cited_by_count", 0))
 
             entity_type = determine_entity_type(abstract_text)
@@ -498,7 +897,9 @@ def transform(
                     "entity_name": region,
                     "domain": "geography",
                     "source_name": "OpenAlex",
-                    "source_url": paper.get("doi") if paper.get("doi") else paper.get("id"),
+                    "source_url": paper.get("doi")
+                    if paper.get("doi")
+                    else paper.get("id"),
                     "source_author": first_author,
                     "source_title": paper.get("title", ""),
                 }
@@ -586,7 +987,9 @@ def transform(
             for causal_agent_term in CAUSAL_AGENT_VOCABULARY.get(disease_name, []):
                 if causal_agent_term in abstract_text_lower:
                     found_causal_agents.append(causal_agent_term)
-            found_causal_agents = filter_redundant_causal_agent_matches(found_causal_agents)
+            found_causal_agents = filter_redundant_causal_agent_matches(
+                found_causal_agents
+            )
 
             for actual_causal_agent in found_causal_agents:
                 canonical_name = normalize_organism_name(actual_causal_agent)
@@ -604,7 +1007,9 @@ def transform(
                 causal_agent_source_dict["entity_name"] = canonical_name
                 causal_agent_source_dict["domain"] = "healthcare"
                 causal_agent_source_dict["source_name"] = "OpenAlex"
-                causal_agent_source_dict["source_url"] = paper.get("doi") if paper.get("doi") else paper.get("id")
+                causal_agent_source_dict["source_url"] = (
+                    paper.get("doi") if paper.get("doi") else paper.get("id")
+                )
                 causal_agent_source_dict["source_author"] = first_author
                 causal_agent_source_dict["source_title"] = paper.get("title", "")
                 sources.append(causal_agent_source_dict)
@@ -617,11 +1022,142 @@ def transform(
                 causes_relationship_dict["relationship"] = "causes"
                 causes_relationship_dict["confidence"] = confidence
                 causes_relationship_dict["context"] = paper.get("title")
-                causes_relationship_dict["source_url"] = paper.get("doi") if paper.get("doi") else paper.get("id")
+                causes_relationship_dict["source_url"] = (
+                    paper.get("doi") if paper.get("doi") else paper.get("id")
+                )
                 causes_relationship_dict["source_author"] = first_author
                 causes_relationship_dict["source_title"] = paper.get("title", "")
                 relationships.append(causes_relationship_dict)
 
+            # --- Genetic / Protective matching ---
+            found_genetic_terms = []
+            for term in GENETIC_PROTECTIVE_VOCABULARY.get(disease_name, []):
+                if term in abstract_text_lower:
+                    found_genetic_terms.append(term)
+
+            found_genetic_terms = filter_redundant_causal_agent_matches(
+                found_genetic_terms
+            )
+
+            for actual_term in found_genetic_terms:
+                genetic_entity = {
+                    "name": actual_term,
+                    "domain": "healthcare",
+                    "entity_type": GENETIC_FACTOR_ENTITY_TYPE,
+                    "region": region,
+                    "expression": paper.get("title"),
+                    "confidence": confidence,
+                    "contributor": "OpenAlex",
+                }
+                entities.append(genetic_entity)
+
+                sources.append(
+                    {
+                        "entity_name": actual_term,
+                        "domain": "healthcare",
+                        "source_name": "OpenAlex",
+                        "source_url": paper.get("doi")
+                        if paper.get("doi")
+                        else paper.get("id"),
+                        "source_author": first_author,
+                        "source_title": paper.get("title", " "),
+                    }
+                )
+
+                relationships.append(
+                    {
+                        "from_entity_name": actual_term,
+                        "from_entity_domain": "healthcare",
+                        "to_entity_name": disease_name,
+                        "to_entity_domain": "healthcare",
+                        "relationship": "protective_against",
+                        "confidence": confidence,
+                        "context": paper.get("title"),
+                        "source_url": paper.get("doi")
+                        if paper.get("doi")
+                        else paper.get("id"),
+                        "source_author": first_author,
+                        "source-title": paper.get("title", " "),
+                    }
+                )
+
+                # Dual mapping only for selected terms
+                if actual_term in DUAL_GENETIC_TERMS:
+                    relationships.append(
+                        {
+                            "from_entity_name": actual_term,
+                            "from_entity_domain": "healthcare",
+                            "to_entity_name": disease_name,
+                            "to_entity_domain": "healtcare",
+                            "relationship": "predisposes_to",
+                            "confidence": confidence,
+                            "context": paper.get("title"),
+                            "source_url": paper.get("doi")
+                            if paper.get("doi")
+                            else paper.get("id"),
+                            "source_author": first_author,
+                            "source_title": paper.get("title", " "),
+                        }
+                    )
+
+            found_vector_terms = []
+            for term in VECTOR_TRANSMISSION_VOCABULARY.get(disease_name, []):
+                if term in abstract_text_lower:
+                    found_vector_terms.append(term)
+
+            found_vector_terms = filter_redundant_causal_agent_matches(
+                found_vector_terms
+            )
+
+            for actual_term in found_vector_terms:
+                canonical_name = normalize_organism_name(actual_term)
+
+                vector_entity = {
+                    "name": canonical_name,
+                    "domain": "healthcare",
+                    "entity_type": CAUSAL_AGENT_ENTITY_TYPE,
+                    "region": region,
+                    "expression": paper.get("title"),
+                    "confidence": confidence,
+                    "contributor": "OpenAlex",
+                }
+                entities.append(vector_entity)
+
+                sources.append(
+                    {
+                        "entity_name": canonical_name,
+                        "domain": "healthcare",
+                        "source_name": "OpenAlex",
+                        "source_url": paper.get("doi")
+                        if paper.get("doi")
+                        else paper.get("id"),
+                        "source_author": first_author,
+                        "source_title": paper.get("title", " "),
+                    }
+                )
+
+                # Both directions
+                for rel_name in ("vector_of", "transmitted_by"):
+                    relationships.append(
+                        {
+                            "from_entity_name": canonical_name
+                            if rel_name == "vector-of"
+                            else disease_name,
+                            "from_entity_domain": "healthcare",
+                            "to_entity_name": disease_name
+                            if rel_name == "vector_of"
+                            else canonical_name,
+                            "to_entity_domain": "healthcare",
+                            "relationship": rel_name,
+                            "confidence": confidence,
+                            "context": paper.get("title"),
+                            "source_url": paper.get("doi")
+                            if paper.get("doi")
+                            else paper.get("id"),
+                            "source_author": first_author,
+                            "source_title": paper.get("title", " "),
+                        }
+                    )
         except Exception as e:
             paper_id = paper.get("id", "N/A")
             print(f"Warning: Skipping paper ID: {paper_id}")
@@ -760,7 +1296,10 @@ def load(entities, relationships, sources, db_session):
                 if not existing_rel_source:
                     existing_relationship.evidence_count += 1
 
-                    existing_relationship.confidence = max(relationship_dict["confidence"], existing_relationship.confidence)
+                    existing_relationship.confidence = max(
+                        relationship_dict["confidence"],
+                        existing_relationship.confidence,
+                    )
 
                     new_rel_source = RelationshipSource(
                         relationship_id=existing_relationship.id,
@@ -799,7 +1338,7 @@ def load(entities, relationships, sources, db_session):
                     confidence=relationship_dict["confidence"],
                     context=relationship_dict["context"],
                     source_author=relationship_dict.get("source_author"),
-                    source_title=relationship_dict.get("source_title")
+                    source_title=relationship_dict.get("source_title"),
                 )
                 db_session.add(new_rel_source)
                 print(
@@ -827,9 +1366,13 @@ def run_openalex_ingestion(disease_name):
     if not raw_records:
         if extract_succeeded:
             # If no record exists abort the operation
-            print(f"No records found for {disease_name}--- extraction completed successfully, no data exists.")
+            print(
+                f"No records found for {disease_name}--- extraction completed successfully, no data exists."
+            )
         else:
-            print(f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence.")
+            print(
+                f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence."
+            )
         return extract_succeeded, set()
 
     entities, relationships, sources = transform(raw_records, disease_name)
