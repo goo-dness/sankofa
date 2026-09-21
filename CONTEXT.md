@@ -243,8 +243,6 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 
 **Immediate (locked, no further additions):** ChEMBL ingestion → straight into the Computational Symbolic Engine (Layer 2). PubMed is done; Europe PMC has been deliberately dropped from the plan; ethnomedicine-targeted ingestion is deferred until after the engine exists, not before.
 
-**Current status (July 2026):** paused on heavy implementation to close a foundational gap — working through Charles Petzold's _Code_ to understand what Python and the underlying hardware are actually doing, rather than continuing to translate pseudocode into syntax without full comprehension. Still coding in small amounts (bug fixes, small additions) during this period, not fully stopped. This directly feeds the eventual C/CPython-internals work needed for OpenShark later — not a detour from the long-term arc, front-loaded foundation for it.
-
 **After ChEMBL:** Computational Symbolic Engine (Layer 2) — recursive CTEs + plain Python. This is where the three-state epistemic awareness requirement (§9) gets implemented, and where confidence/evidence_count actually get _used_ in synthesized answers rather than just stored. Code lives in `computation/` (internal codename; the engine itself is Layer 2, not a separate "SL4" product).
 
 **After the engine:** frontend, then Litsi (Layer 3) — the AI layer (RAG pipeline connecting Claude API to PostgreSQL), kept architecturally distinct from the symbolic core. Embeddings belong to Litsi, not to the computation engine — this separation is deliberate and must be maintained.
@@ -274,6 +272,62 @@ Without this distinction, an empty query result is ambiguous — a researcher ca
 ## 13. Decision Log
 
 Running log of standalone decisions that don't belong inside a specific architecture section — kept dated so the reasoning behind a choice isn't lost later. Newest entries go on top.
+
+### 2026-09-21 — Genetic associations: neutral by default, direction only from a curated table
+
+**Decided:** The abstract scan writes only `associated_with` for genetic
+factors. `protective_against` and `predisposes_to` come only from a
+hand-verified table (`data/genetic_associations.py`), loaded by
+`ingestions/curated_genetics.py`. A row without a real source is skipped, and
+each directed edge's evidence is its curated citation, not abstract matches.
+`DUAL_GENETIC_TERMS` removed.
+**Why:** A term appearing in an abstract cannot show direction. The dual-term
+shortcut wrote both directions to the same disease, creating 10 fake
+contradictions (5 on malaria). A wrong direction is worse than none.
+**Coverage:** The curated loader records no coverage on purpose. The table
+only covers verified pairs, so recording "checked" would claim every disease
+was looked at.
+**Rules out:** Inferring direction from a term's presence. Reading direction
+from cue phrases during ingestion (that is language understanding, Litsi's job).
+**Verified:** Removed 56 scan-made relationships; `associated_with` = 46,
+directed types = 0; malaria neighborhood contradictions 0 (was 5).
+**Unblocks:** Directed facts grow by adding verified rows to the table.
+
+### 2026-09-12 — Layer 1 coverage must be rule-independent, not rule-gated
+
+**Decided:** Populating new relationship types (genetic/protective:
+protective_against, predisposes_to, resistant_to; vector/transmission:
+transmitted_by, vector_of, spreads_via) will follow the same pattern
+as existing treats/causes detection -- broad vocabulary-matching
+against OpenAlex/PubMed abstracts across the full disease list --
+NOT gated behind a pre-designed Layer 2 rule waiting to consume them.
+
+**Why:** A rule-first, data-second approach (data scoped only to what
+a named rule needs) would mean Sankofa can only ever honestly answer
+queries its rules anticipated in advance -- any real-world question
+outside a designed rule's shape would report UNCHARTED even where
+real evidence exists in already-ingested source text, simply because
+no rule asked for it yet. This directly undermines the three-state
+epistemic north star (§9): UNCHARTED must mean "genuinely never
+looked," not "no rule needed this yet."
+
+**Distinguished from expressed_by (2026-08-09):** that was a narrow
+structural bridge between two already broadly-populated categories,
+diagnosed by testing an already-designed rule against real data and
+finding a specific missing connector. This decision is different --
+these are whole categories with zero broad coverage, same starting
+position treats/causes had before OpenAlex/PubMed vocabulary-matching
+existed. Broad, rule-independent extraction is the correct model here,
+not the expressed_by precedent.
+
+**Scope:** Ethnomedicine relationship types remain deferred per §10 --
+unaffected by this decision. structurally_similar_to remains a
+separate, ChEMBL-specific item.
+
+**Unblocks:** openalex.py and pubmed.py can be extended with new
+vocabulary dictionaries (PROTECTIVE_VOCABULARY, VECTOR_VOCABULARY, or
+similar) for these six relationship types, following the exact
+extraction pattern TREATMENT_VOCABULARY already established.
 
 ### 2026-09-12 — Post-Omarchy re-verification: Steps 1-4 and Item 4
 

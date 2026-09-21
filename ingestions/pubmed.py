@@ -1,3 +1,4 @@
+import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -14,7 +15,6 @@ from ingestions.openalex import (
     CAUSAL_AGENT_ENTITY_TYPE,
     CAUSAL_AGENT_VOCABULARY,
     DISEASE_VOCABULARY,
-    DUAL_GENETIC_TERMS,
     GENETIC_FACTOR_ENTITY_TYPE,
     GENETIC_PROTECTIVE_VOCABULARY,
     ORGANISM_NAME_MAP,
@@ -620,6 +620,90 @@ def transform(raw_records, disease_name):
                     "contributor": "PubMed",
                 }
                 entities.append(genetic_entity)
+
+                sources.append(
+                    {
+                        "entity_name": actual_term,
+                        "domain": "healthcare",
+                        "source_name": "PubMed",
+                        "source_url": paper_source_url,
+                        "source_author": first_author,
+                        "source_title": ArticleTitle_TEXT,
+                    }
+                )
+
+                relationships.append(
+                    {
+                        "from_entity_name": actual_term,
+                        "from_entity_domain": "healthcare",
+                        "to_entity_name": disease_name,
+                        "to_entity_domain": "healthcare",
+                        "relationship": "associated_with",
+                        "confidence": confidence_tier_for_this_paper,
+                        "context": ArticleTitle_TEXT,
+                        "source_url": paper_source_url,
+                        "source_name": "PubMed",
+                        "source_author": first_author,
+                        "source_title": ArticleTitle_TEXT,
+                    }
+                )
+
+                # --- Vector / Transmission matching ---
+            found_vector_terms = []
+            for term in VECTOR_TRANSMISSION_VOCABULARY.get(disease_name, []):
+                if term in concatenated_abstract_string_lower:
+                    found_vector_terms.append(term)
+
+            found_vector_terms = filter_redundant_causal_agent_matches(
+                found_vector_terms
+            )
+
+            for actual_term in found_vector_terms:
+                canonical_name = normalize_organism_name(actual_term)
+
+                vector_entity = {
+                    "name": canonical_name,
+                    "domain": "healthcare",
+                    "entity_type": CAUSAL_AGENT_ENTITY_TYPE,
+                    "region": region_name,
+                    "expression": ArticleTitle_TEXT,
+                    "confidence": confidence_tier_for_this_paper,
+                    "contributor": "PubMed",
+                }
+                entities.append(vector_entity)
+
+                sources.append(
+                    {
+                        "entity_name": canonical_name,
+                        "domain": "healthcare",
+                        "source_name": "PubMed",
+                        "source_url": paper_source_url,
+                        "source_author": first_author,
+                        "source_title": ArticleTitle_TEXT,
+                    }
+                )
+
+                for rel_name in ("vector_of", "transmitted_by"):
+                    relationships.append(
+                        {
+                            "from_entity_name": canonical_name
+                            if rel_name == "vector_of"
+                            else disease_name,
+                            "from_entity_domain": "healthcare",
+                            "to_entity_name": disease_name
+                            if rel_name == "vector_of"
+                            else canonical_name,
+                            "to_entity_domain": "healthcare",
+                            "relationship": rel_name,
+                            "confidence": confidence_tier_for_this_paper,
+                            "context": ArticleTitle_TEXT,
+                            "source_url": paper_source_url,
+                            "source_name": "PubMed",
+                            "source_author": first_author,
+                            "source_title": ArticleTitle_TEXT,
+                        }
+                    )
+
         except Exception as error:
             print(
                 f"Warning: Skipping malformed PubMed record (PMID: {current_pmid} for {disease_name} during transform: {error}"
@@ -642,7 +726,15 @@ def load(entities, relationships, sources, db_session):
             relationship_type_name_to_id[row.name] = row.id
 
         # Ensure "prevalent_in" and "treats" relationship types exist
-        for rel_name in ["prevalent_in", "treats"]:
+        for rel_name in [
+            "prevalent_in",
+            "treats",
+            "causes",
+            "protective_against",
+            "predisposes_to",
+            "vector_of",
+            "treatment_by",
+        ]:
             if rel_name not in relationship_type_name_to_id:
                 new_rel_type = RelationshipTypes(name=rel_name)
                 db_session.add(new_rel_type)

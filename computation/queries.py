@@ -146,12 +146,13 @@ TWO_HOP_BACKWARD_QUERY = text("""
 
 NEIGHBORHOOD_QUERY = text("""
     WITH RECURSIVE neighborhood AS (
-        SELECT DISTINCT ON (
-            CASE WHEN er.from_entity_id = :entity_id
-                THEN er.to_entity_id
-                ELSE er.from_entity_id
-            END
-        )
+        -- ANCHOR: every edge touching the start entity, one row PER EDGE.
+        -- (The old version used DISTINCT ON, which kept one arbitrary edge per
+        -- neighbor and silently deleted the rest.)
+        SELECT
+            er.from_entity_id,
+            er.to_entity_id,
+            -- the entity on the other end of this edge from the start entity
             CASE WHEN er.from_entity_id = :entity_id
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
@@ -164,10 +165,16 @@ NEIGHBORHOOD_QUERY = text("""
             END AS direction,
             er.confidence,
             er.evidence_count,
+            -- path = every entity visited so far: the start entity, then this neighbor.
+            -- Including the neighbor stops a self-loop from re-walking itself.
             ARRAY[
                 CASE WHEN er.from_entity_id = :entity_id
                     THEN er.from_entity_id
                     ELSE er.to_entity_id
+                END,
+                CASE WHEN er.from_entity_id = :entity_id
+                    THEN er.to_entity_id
+                    ELSE er.from_entity_id
                 END
             ] AS path,
             1 AS depth
@@ -176,14 +183,15 @@ NEIGHBORHOOD_QUERY = text("""
         WHERE er.from_entity_id = :entity_id
             OR er.to_entity_id = :entity_id
 
-        UNION
+        -- UNION ALL, not UNION: UNION would deduplicate identical rows and can
+        -- hide legitimate parallel edges between the same two entities.
+        UNION ALL
 
-        SELECT DISTINCT ON (
-            CASE WHEN er.from_entity_id = n.connected_id
-                THEN er.to_entity_id
-                ELSE er.from_entity_id
-            END
-        )
+        -- RECURSIVE STEP: walk one more edge out from each neighbor found so far.
+        -- Note: "direction" here is relative to n.connected_id, not the start entity.
+        SELECT
+            er.from_entity_id,
+            er.to_entity_id,
             CASE WHEN er.from_entity_id = n.connected_id
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
@@ -208,15 +216,17 @@ NEIGHBORHOOD_QUERY = text("""
         )
         JOIN relationship_types rt ON er.relationship_id = rt.id
         WHERE n.depth < :max_depth
+            -- cycle guard: never step onto an entity already on this path
             AND CASE WHEN er.from_entity_id = n.connected_id
                     THEN er.to_entity_id
                     ELSE er.from_entity_id
                 END != ALL(n.path)
-
     )
     SELECT
         e.name AS entity_name,
         n.connected_id AS connected_entity_id,
+        n.from_entity_id,
+        n.to_entity_id,
         n.relationship_ids AS relationship_ids,
         n.relationship_type,
         n.direction,
@@ -225,7 +235,11 @@ NEIGHBORHOOD_QUERY = text("""
         n.depth
     FROM neighborhood n
     JOIN entities e ON n.connected_id = e.id
-    ORDER BY n.depth, e.name
+    -- Nearest neighbors first, so a truncated result keeps the closest facts.
+    -- The final key makes the order deterministic (the old one wasn't).
+    ORDER BY n.depth, e.name, n.relationship_ids
+    -- Hard row cap, passed in from the executor.
+    LIMIT :row_limit
     """)
 
 

@@ -7,20 +7,33 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
 from data.relationship_types import relationship_types_data
+from ingestions.chembl import MESH_DISEASE_MAP, run_chembl_ingestion
+from ingestions.curated_genetics import run_curated_genetics_ingestion
 from ingestions.openalex import DISEASE_VOCABULARY, run_openalex_ingestion
 from ingestions.pubmed import run_pubmed_ingestion
-from ingestions.who import extract_who_data, load_to_database, transform_to_entities, INDICATOR_MAP
-from models.relations_type import RelationshipTypes
+from ingestions.who import (
+    INDICATOR_MAP,
+    extract_who_data,
+    load_to_database,
+    transform_to_entities,
+)
 from models.coverage import IngestionCoverage
-from ingestions.chembl import run_chembl_ingestion, MESH_DISEASE_MAP
+from models.relations_type import RelationshipTypes
+
 Base.metadata.create_all(bind=engine)
 
 
-def record_coverage(db, domain: str, disease_name: str, source_name: str, relationship_type: str):
+def record_coverage(
+    db, domain: str, disease_name: str, source_name: str, relationship_type: str
+):
     normalized = disease_name.strip().lower()
     existing = (
         db.query(IngestionCoverage)
-        .filter_by(disease_name=normalized, source_name=source_name, relationship_type=relationship_type)
+        .filter_by(
+            disease_name=normalized,
+            source_name=source_name,
+            relationship_type=relationship_type,
+        )
         .first()
     )
     if existing:
@@ -28,10 +41,15 @@ def record_coverage(db, domain: str, disease_name: str, source_name: str, relati
     else:
         db.add(
             IngestionCoverage(
-                domain=domain, disease_name=normalized, source_name=source_name, relationship_type=relationship_type
+                domain=domain,
+                disease_name=normalized,
+                source_name=source_name,
+                relationship_type=relationship_type,
             )
         )
     db.commit()
+
+
 # Define insertion parameters
 WHO_INDICATOR_CODES_TO_INGEST = [
     "MALARIA_EST_INCIDENCE",
@@ -96,13 +114,21 @@ def run_who_ingestion():
                 disease_name = INDICATOR_MAP.get(indicator_code, indicator_code)
                 if extract_succeeded:
                     print(
-                    f" No data extracted for {indicator_code}--- extraction completed, no data.Skipping load."
+                        f" No data extracted for {indicator_code}--- extraction completed, no data.Skipping load."
                     )
                     with get_db() as db_session:
                         for rel_type in ("measures", "prevalent_in"):
-                            record_coverage(db_session, "epidemiology", disease_name, "WHO GHO", rel_type)
+                            record_coverage(
+                                db_session,
+                                "epidemiology",
+                                disease_name,
+                                "WHO GHO",
+                                rel_type,
+                            )
                 else:
-                    print(f"No data extracted for {indicator_code} -- extraction FAILED, coverage not recorded.")
+                    print(
+                        f"No data extracted for {indicator_code} -- extraction FAILED, coverage not recorded."
+                    )
                 continue
         except Exception as e:
             print(f" Error during extraction for {indicator_code}:", {e})
@@ -142,7 +168,9 @@ def run_who_ingestion():
                     r["relationship_name"] for r in transformed_relationships
                 )
                 for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "epidemiology", disease_name, "WHO GHO", rel_type)
+                    record_coverage(
+                        db_session, "epidemiology", disease_name, "WHO GHO", rel_type
+                    )
             except Exception as e:
                 print(f"  Error during database load for {indicator_code}: {e}")
     print("WHO GHO ingestion pipeline finished.")
@@ -151,27 +179,40 @@ def run_who_ingestion():
 def run_openalex():
     print("Starting OpenAlex ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        extract_succeeded, touched_relationship_types = run_openalex_ingestion(disease_name)
+        extract_succeeded, touched_relationship_types = run_openalex_ingestion(
+            disease_name
+        )
         if extract_succeeded:
             with get_db() as db_session:
                 for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "OpenAlex", rel_type)
+                    record_coverage(
+                        db_session, "healthcare", disease_name, "OpenAlex", rel_type
+                    )
         else:
-            print(f"Skipping coverage for {disease_name} -- OpenAlex extraction did not succeeded")
+            print(
+                f"Skipping coverage for {disease_name} -- OpenAlex extraction did not succeeded"
+            )
     print("OpenAlex ingestion pipeline finished.")
 
 
 def run_pubmed():
     print("Starting PubMed ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        extract_succeeded, touched_relationship_types = run_pubmed_ingestion(disease_name)
+        extract_succeeded, touched_relationship_types = run_pubmed_ingestion(
+            disease_name
+        )
         if extract_succeeded:
             with get_db() as db_session:
                 for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "PubMed", rel_type)
+                    record_coverage(
+                        db_session, "healthcare", disease_name, "PubMed", rel_type
+                    )
         else:
-            print(f"Skipping coverage for {disease_name} -- PubMed did not record the extraction")
+            print(
+                f"Skipping coverage for {disease_name} -- PubMed did not record the extraction"
+            )
     print("PubMed ingestion pipeline finished.")
+
 
 def run_chembl():
     print("Starting ChEMBL ingestion pipeline...")
@@ -180,10 +221,22 @@ def run_chembl():
         if extract_succeeded:
             with get_db() as db_session:
                 for entity_name, rel_type in touched_coverage:
-                    record_coverage(db_session, "healthcare", entity_name, "ChEMBL", rel_type)
+                    record_coverage(
+                        db_session, "healthcare", entity_name, "ChEMBL", rel_type
+                    )
         else:
             print(f"SKipping coverage for {disease_name}-- no data reocrded")
         print("ChEMBL ingestion complete.")
+
+
+def run_curated_genetics():
+    run_curated_genetics_ingestion()
+    # Curated rows are hand-checked facts, not a scan of every disease.
+    # We deliberately do NOT call record_coverage() here: recording "checked"
+    # for protective_against / predisposes_to would claim we looked at every
+    # disease, but this table only covers pairs someone verified.
+    # Coverage for those two types stays UNCHARTED. That is the honest answer.
+
 
 if __name__ == "__main__":
     seed_relationship_types()
@@ -191,3 +244,4 @@ if __name__ == "__main__":
     run_openalex()
     run_pubmed()
     run_chembl()
+    run_curated_genetics()

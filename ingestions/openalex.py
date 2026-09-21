@@ -696,21 +696,6 @@ VECTOR_TRANSMISSION_VOCABULARY = {
     ],
 }
 
-DUAL_GENETIC_TERMS = {
-    "sickle cell trait",
-    "hemoglobin s",
-    "hbs",
-    "g6pd deficiency",
-    "glucose-6-phosphate dehydrogenase deficiency",
-    "thalassaemia trait",
-    "alpha thalassaemia",
-    "beta thalassaemia",
-    "duffy negativity",
-    "duffy negative",
-    "hemoglobin c",
-    "hbc",
-}
-
 
 def normalize_organism_name(raw_name: str) -> str:
     lowered = raw_name.lower().strip()
@@ -1070,35 +1055,16 @@ def transform(
                         "from_entity_domain": "healthcare",
                         "to_entity_name": disease_name,
                         "to_entity_domain": "healthcare",
-                        "relationship": "protective_against",
+                        "relationship": "associated_with",
                         "confidence": confidence,
                         "context": paper.get("title"),
                         "source_url": paper.get("doi")
                         if paper.get("doi")
                         else paper.get("id"),
                         "source_author": first_author,
-                        "source-title": paper.get("title", " "),
+                        "source_title": paper.get("title", " "),
                     }
                 )
-
-                # Dual mapping only for selected terms
-                if actual_term in DUAL_GENETIC_TERMS:
-                    relationships.append(
-                        {
-                            "from_entity_name": actual_term,
-                            "from_entity_domain": "healthcare",
-                            "to_entity_name": disease_name,
-                            "to_entity_domain": "healtcare",
-                            "relationship": "predisposes_to",
-                            "confidence": confidence,
-                            "context": paper.get("title"),
-                            "source_url": paper.get("doi")
-                            if paper.get("doi")
-                            else paper.get("id"),
-                            "source_author": first_author,
-                            "source_title": paper.get("title", " "),
-                        }
-                    )
 
             found_vector_terms = []
             for term in VECTOR_TRANSMISSION_VOCABULARY.get(disease_name, []):
@@ -1141,7 +1107,7 @@ def transform(
                     relationships.append(
                         {
                             "from_entity_name": canonical_name
-                            if rel_name == "vector-of"
+                            if rel_name == "vector_of"
                             else disease_name,
                             "from_entity_domain": "healthcare",
                             "to_entity_name": disease_name
@@ -1178,7 +1144,15 @@ def load(entities, relationships, sources, db_session):
         }
 
         # Ensure "prevalent_in" and "treats" relationships types exist
-        for rel_name in ["prevalent_in", "treats"]:
+        for rel_name in [
+            "prevalent_in",
+            "treats",
+            "causes",
+            "protective_against",
+            "predisposes_to",
+            "vector_of",
+            "transmitted_by",
+        ]:
             if rel_name not in relationship_type_name_to_id:
                 new_rel_type = RelationshipTypes(name=rel_name)
                 db_session.add(new_rel_type)
