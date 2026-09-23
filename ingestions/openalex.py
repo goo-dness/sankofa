@@ -257,9 +257,7 @@ CAUSAL_AGENT_VOCABULARY = {
     "malaria": [
         "plasmodium falciparum",
         "plasmodium vivax",
-        "anopheles mosquito",
         "malaria parasite",
-        "anopheles",
         "plasmodium",
     ],
     "HIV": ["human immunodeficiency virus", "hiv-1", "hiv-2", "retrovirus"],
@@ -299,22 +297,20 @@ CAUSAL_AGENT_VOCABULARY = {
         "vibrio cholerae",
         "cryptosporidium",
     ],
-    "yellow fever": ["yellow fever virus", "flavivirus", "aedes aegypti"],
-    "dengue fever": ["dengue virus", "denv", "aedes aegypti", "aedes albopictus"],
+    "yellow fever": ["yellow fever virus", "flavivirus"],
+    "dengue fever": ["dengue virus", "denv"],
     "ebola": ["ebola virus", "zaire ebolavirus", "filovirus"],
     "mpox": ["monkeypox virus", "mpox virus", "orthopoxvirus"],
     "schistosomiasis": [
         "schistosoma mansoni",
         "schistosoma haematobium",
         "schistosoma japonicum",
-        "freshwater snail",
     ],
-    "onchocerciasis": ["onchocerca volvulus", "blackfly", "simulium"],
+    "onchocerciasis": ["onchocerca volvulus"],
     "lymphatic filariasis": [
         "wuchereria bancrofti",
         "brugia malayi",
         "brugia timori",
-        "mosquito vector",
     ],
     "trachoma": ["chlamydia trachomatis"],
     "trypanosomiasis": [
@@ -325,13 +321,11 @@ CAUSAL_AGENT_VOCABULARY = {
     ],
     "leishmaniasis": [
         "leishmania parasite",
-        "sandfly",
         "leishmania donovani",
-        "phlebotomus",
     ],
     "buruli ulcer": ["mycobacterium ulcerans"],
     "leprosy": ["mycobacterium leprae"],
-    "guinea worm": ["dracunculus medinensis", "guinea worm larvae", "copepod"],
+    "guinea worm": ["dracunculus medinensis", "guinea worm larvae"],
     "soil-transmitted helminths": [
         "ascaris lumbricoides",
         "hookworm",
@@ -396,20 +390,14 @@ CAUSAL_AGENT_VOCABULARY = {
     "lassa fever": [
         "lassa virus",
         "arenavirus",
-        "mastomys natalensis",
-        "multimammate rat",
     ],
     "marburg virus": [
         "marburg virus",
         "filovirus",
-        "rousettus aegyptiacus",
-        "fruit bat",
     ],
     "rift valley fever": [
         "rift valley fever virus",
         "phlebovirus",
-        "aedes mosquito",
-        "culex mosquito",
     ],
 }
 TREATMENT_KEYWORDS = [

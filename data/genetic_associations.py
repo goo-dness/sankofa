@@ -2,54 +2,53 @@
 # Each row is one fact you have verified against a real paper.
 # A row with an empty source_url is SKIPPED by the loader (step 3),
 # so nothing unverified can enter the graph.
-
 GENETIC_ASSOCIATIONS = [
     {
-        "factor": "sickle cell trait",  # must match the existing entity name (lowercase)
-        "disease": "malaria",  # the disease entity this fact is about
-        "relationship": "protective_against",  # or "predisposes_to"
-        "confidence": 1,  # 1-3; set it after you read the source
-        "context": "Protects against severe malaria, not against infection.",  # the caveat
-        "source_url": "",  # DOI or PubMed link. Empty = skipped
-        "source_title": "",
-        "source_author": "",
+        "factor": "sickle cell trait",
+        "disease": "malaria",
+        "relationship": "protective_against",
+        "confidence": 3,
+        "context": "Protects against severe malaria (91% risk reduction), not against infection.",
+        "source_url": "https://doi.org/10.1016/S1473-3099(12)70055-5",
+        "source_title": "Haemoglobinopathies and the clinical epidemiology of malaria: a systematic review and meta-analysis",
+        "source_author": "Taylor SM, Parobek CM, Fairhurst RM",
     },
     {
         "factor": "hemoglobin c",
         "disease": "malaria",
         "relationship": "protective_against",
-        "confidence": 1,
-        "context": "Strongest protection in people with two copies (CC).",
-        "source_url": "",
-        "source_title": "",
-        "source_author": "",
+        "confidence": 3,
+        "context": "Protects against severe malaria; strongest with two copies (CC, 73% reduction), weaker with one copy (AC).",
+        "source_url": "https://doi.org/10.1016/S1473-3099(12)70055-5",
+        "source_title": "Haemoglobinopathies and the clinical epidemiology of malaria: a systematic review and meta-analysis",
+        "source_author": "Taylor SM, Parobek CM, Fairhurst RM",
     },
     {
         "factor": "duffy negative",
         "disease": "malaria",
         "relationship": "protective_against",
-        "confidence": 1,
-        "context": "Protects against Plasmodium vivax only, not falciparum.",
-        "source_url": "",
-        "source_title": "",
-        "source_author": "",
+        "confidence": 3,
+        "context": "Reduces risk of Plasmodium vivax infection (pooled OR 0.46); not complete protection, breakthrough infections reported across several African countries.",
+        "source_url": "https://doi.org/10.1038/s41598-022-07711-5",
+        "source_title": "Prevalence and risk of Plasmodium vivax infection among Duffy-negative individuals: a systematic review and meta-analysis",
+        "source_author": "Wilairatana P, Masangkay FR, Kotepui KU, Milanez GD, Kotepui M",
     },
     {
         "factor": "ccr5 delta32",
         "disease": "hiv",
         "relationship": "protective_against",
-        "confidence": 1,
-        "context": "Two copies protect against infection with CCR5-using HIV strains.",
-        "source_url": "",
-        "source_title": "",
-        "source_author": "",
+        "confidence": 3,
+        "context": "Protects against HIV-1 infection with TWO copies (homozygous, OR 0.25); one copy (heterozygous) showed a slightly INCREASED risk (OR 1.16) in the same meta-analysis.",
+        "source_url": "https://doi.org/10.1515/med-2018-0062",
+        "source_title": "The CCR5-Delta32 Genetic Polymorphism and HIV-1 Infection Susceptibility: a Meta-analysis",
+        "source_author": "Ni J, Wang D, Wang S",
     },
     {
         "factor": "apol1",
         "disease": "trypanosomiasis",
         "relationship": "protective_against",
         "confidence": 1,
-        "context": "G1/G2 variants protect against Trypanosoma brucei rhodesiense (a separate pair from kidney risk).",
+        "context": "NOT YET RESOLVED: G2 protects against T. b. rhodesiense but may increase susceptibility to T. b. gambiense; G1 protects against T. b. gambiense. Needs species-level disease entities before this can be a single row. Left with no source_url on purpose so the loader skips it.",
         "source_url": "",
         "source_title": "",
         "source_author": "",

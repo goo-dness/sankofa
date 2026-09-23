@@ -1,6 +1,6 @@
 # Computational Symbolic Engine — Architecture
 
-**Date:** July 2026 (updated 2026-07-25)
+**Date:** July 2026 (updated 2026-09-23)
 **Decision:** Postgres recursive CTEs + plain Python (no logic-programming library)
 **Status:** In progress
 
@@ -34,6 +34,8 @@ entity_relations (directed edges)
 ├── confidence: INT (1-3)
 ├── evidence_count: INT (default 1)
 ├── context: VARCHAR
+├── derived_from: ancestry of rule-derived facts (see §11)
+├── derivation_depth: hops of derivation for rule-derived facts (see §11)
 └── ...
 
 relationship_types (edge labels)
@@ -48,14 +50,35 @@ relationship_sources (per-edge provenance)
 ├── relationship_id: FK → entity_relations.id
 ├── source_name: VARCHAR
 ├── source_url: VARCHAR
+├── source_author: VARCHAR (nullable)
+├── source_title: VARCHAR (nullable)
 ├── confidence: INT (this source's own rating)
 └── ...
+
+entity_sources (per-entity provenance)
+├── id: INT PK
+├── entity_id: FK → entities.id
+├── source_name: VARCHAR
+├── source_url: VARCHAR
+├── source_author: VARCHAR (nullable)
+├── source_title: VARCHAR (nullable)
+└── ...
+
+ingestion_coverage (what has been checked)
+├── id: INT PK
+├── domain: VARCHAR
+├── disease_name: VARCHAR
+├── source_name: VARCHAR
+├── relationship_type: VARCHAR
+├── last_ingested_at: TIMESTAMP
+└── UNIQUE (disease_name, source_name, relationship_type)  -- uq_disease_source_reltype
 ```
 
 **Key properties:**
+
 - Graph is directed (from → to), but the engine treats it as undirectional for neighborhood queries
 - Each edge carries its own confidence and evidence_count
-- 62 relationship types seeded across 9 domains
+- 63 relationship types seeded across 9 domains
 - Table name is `entity_relations` throughout the codebase (not `entity_relationships` — that name appears only in earlier prose notes and is corrected here)
 
 ---
@@ -139,12 +162,14 @@ SELECT
 FROM traversal t
 JOIN entities e1 ON t.from_entity_id = e1.id
 JOIN entities e2 ON t.to_entity_id = e2.id
-JOIN relationship_types rt ON t.relationship_id = rt.id;
+JOIN relationship_types rt ON t.relationship_id = rt.id
+WHERE t.depth = :max_depth;
 ```
 
 **Cycle prevention:** The `path` array tracks visited node IDs. Each new hop checks `er.to_entity_id != ALL(t.path)` to prevent infinite loops on cyclic graphs.
 
-**Provenance (2026-07-25 fix):** `relationship_id` was previously carried as a scalar that got silently overwritten at each recursive step — a 2-hop answer only retained the *second* edge's ID, dropping the first hop's citation entirely. Fixed by accumulating `relationship_ids` as an array the same way `path` accumulates node IDs. The Python citations resolver must now join `relationship_sources` against every ID in the array, not a single value. This applies to every multi-hop query below.
+**Provenance (2026-07-25 fix):** `relationship_id` was previously carried as a scalar that got silently overwritten at each recursive step — a 2-hop answer only retained the _second_ edge's ID, dropping the first hop's citation entirely. Fixed by accumulating `relationship_ids` as an array the same way `path` accumulates node IDs. The Python citations resolver must now join `relationship_sources` against every ID in the array, not a single value. This applies to every multi-hop query below.
+**Depth filter (2026-09-06 fix):** the final SELECT originally had no depth filter, so the CTE's depth-1 anchor rows flowed through alongside completed depth-2 chains. Any two-hop query whose second hop failed to match still returned the leftover hop-1 row and silently reported KNOWN instead of reaching epistemic resolution. Fixed with `WHERE t.depth = :max_depth`; applies to 3.2b as well.
 **Contradiction detection (2026-07-29 fix):** `from_entity_id`/`to_entity_id`
 were missing from the final SELECT, so `detect_contradictions()` had no
 entity-pair key to group on and would `KeyError` on any non-empty result
@@ -156,9 +181,11 @@ never surfaced). Applies to 3.2b below as well.
 Use case: same shape as 3.2 but starting from a known target and walking backward — "What could plausibly cause X, working back through intermediate mechanisms?"
 
 Same structure as 3.2, mirrored:
+
 - Anchor matches on `to_entity_id` against `:target_name` instead of `from_entity_id` against `:source_name`
 - Recursive join is `ON er.to_entity_id = t.from_entity_id` (extending backward), path/relationship_ids accumulate `er.from_entity_id` / `er.relationship_id` accordingly
 - Cycle check is `er.from_entity_id != ALL(t.path)`
+- Final SELECT filters `WHERE t.depth = :max_depth`, same fix as 3.2
 
 Not derivable by simply swapping direction labels on 3.2 — the join condition and accumulation direction both flip. Implemented as `TWO_HOP_BACKWARD_QUERY` in `queries.py`.
 
@@ -269,7 +296,7 @@ ORDER BY ps.depth
 LIMIT 1;
 ```
 
-**Note:** this query still returns a scalar `relationship_id` (last hop only), same gap described in §3.2. `relationship_path` (the array of relationship *type names*) already accumulates correctly across hops — `relationship_id` should be upgraded to an array the same way once the citations resolver needs full-path provenance for path-finding results, not just chain results. Flagged as a follow-up, not yet applied here.
+**Note:** this query still returns a scalar `relationship_id` (last hop only), same gap described in §3.2. `relationship_path` (the array of relationship _type names_) already accumulates correctly across hops — `relationship_id` should be upgraded to an array the same way once the citations resolver needs full-path provenance for path-finding results, not just chain results. Flagged as a follow-up, not yet applied here.
 
 ---
 
@@ -279,7 +306,7 @@ Operates on CTE query results. No ORM dependency — receives lists of dicts fro
 
 ### 4.1 Evidence Weighing
 
-**Design decision (2026-07-21, resolves earlier §10/§11 conflict):** the original single `weigh_chain()` used `max()` across a chain unconditionally. That's correct for aggregating multiple *independent sources confirming the same fact* (corroboration), but wrong for *combining different facts to derive a new one* (derivation) — `max()` would let a weak premise get laundered into a falsely-strong derived fact. These are split into two functions:
+**Design decision (2026-07-21, resolves earlier §10/§11 conflict):** the original single `weigh_chain()` used `max()` across a chain unconditionally. That's correct for aggregating multiple _independent sources confirming the same fact_ (corroboration), but wrong for _combining different facts to derive a new one_ (derivation) — `max()` would let a weak premise get laundered into a falsely-strong derived fact. These are split into two functions:
 
 ```python
 TIER_SCORE = {1: 0.3, 2: 0.6, 3: 1.0}  # Traditional, Emerging, Established
@@ -381,9 +408,6 @@ CONFLICT_PAIRS: set[tuple[str, str]] = {
 def detect_contradictions(results: list[dict]) -> list[dict]:
     """Detect conflicting relationship types on the same entity pair,
     including conflicts across reversed direction (A->B vs B->A).
-
-    Uses undirected dedup (frozenset) to avoid checking the same
-    entity pair twice from both directions.
     """
     entity_pairs: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for r in results:
@@ -391,17 +415,10 @@ def detect_contradictions(results: list[dict]) -> list[dict]:
         entity_pairs[key].append(r)
 
     contradictions = []
-    seen_pairs: set[frozenset] = set()
 
     for pair_key, relationships in entity_pairs.items():
         from_id, to_id = pair_key
         reverse_key = (to_id, from_id)
-
-        # avoid checking the same undirected pair twice
-        undirected_key = frozenset(pair_key)
-        if undirected_key in seen_pairs:
-            continue
-        seen_pairs.add(undirected_key)
 
         same_dir_types = {r["relationship_type"] for r in relationships}
         reverse_relationships = entity_pairs.get(reverse_key, [])
@@ -438,10 +455,11 @@ def detect_contradictions(results: list[dict]) -> list[dict]:
 ```
 
 Detects two kinds of conflicts:
+
 1. **Same-direction:** A→B has type a AND A→B has type b (e.g. "X treats Y" AND "X contraindicated_with Y")
 2. **Reverse-direction:** A→B has type a AND B→A has type b (e.g. "X inhibits Y" AND "Y activates X")
 
-The `direction` field in each contradiction output indicates which kind was detected. Uses `frozenset` dedup to avoid checking the same undirected entity pair twice.
+The `direction` field in each contradiction output indicates which kind was detected. There is deliberately no undirected-pair dedup: `(A,B)` and `(B,A)` are order-sensitive per `CONFLICT_PAIRS` tuple and test different conditions, so an earlier `seen_pairs`/`frozenset` dedup silently dropped real contradictions (removed 2026-08-28, see DECISIONS.md).
 
 ### 4.3 Three-State Epistemic Resolution
 
@@ -455,53 +473,17 @@ class EpistemicState(str, Enum):
     KNOWABLY_ABSENT = "Knowably absent"
     UNCHARTED = "Uncharted"
 
-
-def resolve_epistemic_state(
-    query_results: list[dict],
-    coverage_registry: dict[str, list[str]] | None = None,
-    disease_name: str | None = None,
-) -> dict:
-    """Classify query results into one of three epistemic states.
-
-    1. Known — relationship exists, backed by >= 1 source
-    2. Knowably absent — domain was ingested, nothing found
-    3. Uncharted — domain hasn't been ingested yet
-
-    coverage_registry maps disease_name to a list of ingested source names.
-    Only needed for full three-state support; can be None initially.
-    """
-    if query_results:
-        return {
-            "state": EpistemicState.KNOWN,
-            "data": query_results,
-            "confidence": aggregate_confidence(query_results),
-            "evidence_count": aggregate_evidence(query_results),
-        }
-
-    if coverage_registry is None or disease_name is None:
-        return {
-            "state": EpistemicState.KNOWABLY_ABSENT,
-            "data": [],
-            "message": "No established relationship found.",
-        }
-
-    if disease_name in coverage_registry:
-        return {
-            "state": EpistemicState.KNOWABLY_ABSENT,
-            "data": [],
-            "message": f"No established relationship found. "
-                       f"Sources checked: {', '.join(coverage_registry[disease_name])}",
-        }
-
-    return {
-        "state": EpistemicState.UNCHARTED,
-        "data": [],
-        "message": f"'{disease_name}' has not been ingested yet. "
-                   f"This is a coverage gap, not a negative finding.",
-    }
 ```
 
-Calls `aggregate_confidence`/`aggregate_evidence` directly — this is query-time aggregation over parallel results (corroboration), not derivation. The docstring above must stay a plain string, not an f-string: `{disease_name: [source_names_ingested]}` was illustrative prose, and inside an f-string the colon is parsed as a format-spec separator, not a dict literal — an earlier draft had this as `f"""..."""` and it raised `TypeError` on every call before any real logic ran. Fixed 2026-07-25.
+**`resolve_epistemic_state()` (rewritten 2026-08-26, see DECISIONS.md):** it no longer takes a `coverage_registry` dict. It calls `has_coverage()`, which queries `ingestion_coverage` live on every call. Coverage is tracked per `(disease_name, source_name, relationship_type)` (2026-08-01).
+
+1. **Known** — results are non-empty. Confidence and evidence count come from `aggregate_confidence`/`aggregate_evidence` (query-time corroboration across parallel results, not derivation).
+2. **Knowably absent** — results are empty and coverage exists; the message lists the sources that actually checked.
+3. **Uncharted** — results are empty and no coverage exists. This is a coverage gap, not a negative finding.
+
+There is deliberately no fallback. The earlier version returned Knowably absent when the registry was `None`, treating "unknown whether checked" as "checked and found nothing". Any path that returns Knowably absent without querying live coverage is ruled out.
+
+**Two-hop chains (2026-09-06):** `resolve_chain_epistemic_state_forward()` and `resolve_chain_epistemic_state_backward()` share one combinator. Non-empty results delegate to `resolve_epistemic_state()`. Empty results decompose into hop-1 coverage, then hop-1 rows, then per-intermediate hop-2 coverage, using a weakest-link rule. Branches (a) hop 1 uncovered → Uncharted and (b) hop 1 covered with zero rows → Knowably absent are verified against live data. Branches (c) and (d) are logically sound but unverified: `has_coverage()` only matches disease-shaped names, and no genuine disease-to-disease edge exists in the graph yet.
 
 ---
 
@@ -560,15 +542,15 @@ sankofa/
 
 ## 9. Implementation Order
 
-| Phase | What | Depends on |
-|-------|------|------------|
-| 1 | Single-hop CTE queries + Python evidence-weighing | Nothing |
-| 2 | Fixed-depth recursive CTEs (2-3 hop, forward + backward) | Phase 1 |
-| 3 | Contradiction detection logic | Phase 1 |
-| 4 | Three-state epistemic resolution | Phase 1 |
-| 5 | Bidirectional neighborhood + path finding | Phase 1-2 |
-| 6 | Rule-based derivation (Layer 2/3) | Phases 1-5 |
-| 7 | API router endpoints | Phases 1-6 |
+| Phase | What                                                     | Depends on |
+| ----- | -------------------------------------------------------- | ---------- |
+| 1     | Single-hop CTE queries + Python evidence-weighing        | Nothing    |
+| 2     | Fixed-depth recursive CTEs (2-3 hop, forward + backward) | Phase 1    |
+| 3     | Contradiction detection logic                            | Phase 1    |
+| 4     | Three-state epistemic resolution                         | Phase 1    |
+| 5     | Bidirectional neighborhood + path finding                | Phase 1-2  |
+| 6     | Rule-based derivation (Layer 2/3)                        | Phases 1-5 |
+| 7     | API router endpoints                                     | Phases 1-6 |
 
 **Phase 1 is the minimum viable engine.** A researcher can ask "What treats malaria?" and get a confidence-rated, evidence-counted answer with source attribution.
 
@@ -576,18 +558,18 @@ sankofa/
 
 ## 10. Design Decisions (locked)
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Max traversal depth | 3 hops | Prevents runaway queries on dense graph sections |
-| Confidence aggregation — corroboration | `max()` across independent sources | One strong RCT outweighs ten weak case reports |
-| Confidence aggregation — derivation | `min()` across premises, then `DECAY` per hop, hard-capped | A derivation chain can't be stronger than its weakest premise, and inference itself must cost confidence — prevents laundering |
-| Evidence counting | Sum across chain | Each independent source confirms = +1 |
-| Bidirectional handling | `OR` in JOIN | No duplicated edges, no separate "reverse" table |
-| Neighborhood cycle prevention | `ARRAY` path tracking (not depth-bound alone) | Consistent with 2-hop/path queries; prevents duplicate revisits in dense graphs |
-| Contradiction pairs | Hardcoded set, same-direction + reverse-direction | Bounded, predictable; `direction` field distinguishes the two kinds |
-| SQL execution | Raw `text()` queries | Full CTE control, no ORM abstraction overhead |
-| Cycle prevention (traversal) | `ARRAY` path tracking | PostgreSQL arrays for visited-node tracking |
-| Rule-based derivation | Plain Python functions, not DL/Datalog | See §11 |
+| Decision                               | Choice                                                     | Rationale                                                                                                                      |
+| -------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Max traversal depth                    | 3 hops                                                     | Prevents runaway queries on dense graph sections                                                                               |
+| Confidence aggregation — corroboration | `max()` across independent sources                         | One strong RCT outweighs ten weak case reports                                                                                 |
+| Confidence aggregation — derivation    | `min()` across premises, then `DECAY` per hop, hard-capped | A derivation chain can't be stronger than its weakest premise, and inference itself must cost confidence — prevents laundering |
+| Evidence counting                      | Sum across chain                                           | Each independent source confirms = +1                                                                                          |
+| Bidirectional handling                 | `OR` in JOIN                                               | No duplicated edges, no separate "reverse" table                                                                               |
+| Neighborhood cycle prevention          | `ARRAY` path tracking (not depth-bound alone)              | Consistent with 2-hop/path queries; prevents duplicate revisits in dense graphs                                                |
+| Contradiction pairs                    | Hardcoded set, same-direction + reverse-direction          | Bounded, predictable; `direction` field distinguishes the two kinds                                                            |
+| SQL execution                          | Raw `text()` queries                                       | Full CTE control, no ORM abstraction overhead                                                                                  |
+| Cycle prevention (traversal)           | `ARRAY` path tracking                                      | PostgreSQL arrays for visited-node tracking                                                                                    |
+| Rule-based derivation                  | Plain Python functions, not DL/Datalog                     | See §11                                                                                                                        |
 
 `max()` and `min()` are answering different questions (corroboration vs. derivation) — see §4.1 for why they were previously conflated under one function and why that was a bug.
 
@@ -600,6 +582,7 @@ sankofa/
 Confidence for derived facts uses `weigh_derived_fact()` (§4.1): `TIER_SCORE`, `min()` across premises, `DECAY = 0.75` per hop, hard-capped tier stored under the `confidence` key — deliberately matching both `entity_relations.confidence` and the key premises expect, so a derived fact can feed directly into a further hop with no remapping.
 
 Cycle/runaway protection, three independent guards:
+
 - `MAX_DEPTH = 3` — facts at max depth aren't used as premises for further derivation
 - `derived_from: list[fact_id]` ancestry walked backward before insert, rejecting direct cycles
 - Dedup check on `(subject, relation, object)` before any insert, as a backstop
@@ -610,6 +593,10 @@ Cycle/runaway protection, three independent guards:
 
 **Unblocks:** first rule to implement — `inhibits + causes → treats` (derived), tested on the malaria/anemia slice before generalizing to a rule-registration framework.
 
+**Update (2026-08-25):** the first rule implemented was `causal_path(db)` in `rules.py` (`inhibits + expressed_by + causes → treats`). 78 candidate chains, 75 `treats` facts inserted at tier 3 and depth 1, 3 caught by the in-run duplicate guard. The `expressed_by` bridge (protein → organism) was added 2026-08-09, and `treats + treats → treats` was ruled out.
+
+**Rule classification (locked 2026-08-25):** every rule is classified before it is built. A **hypothesis rule** composes different facts into a new, uncertain claim and gets the full `weigh_derived_fact()` treatment (decay, tier cap, depth tracking, cycle guard). A **resolution rule** recognizes the same fact under a different identity (for example a salt form and its parent molecule via `derived_from`) and copies confidence forward at full strength, with no decay and no tier cap, in a separate function. The two kinds never share scoring machinery.
+
 ---
 
 ## 12. Out of Scope
@@ -618,5 +605,5 @@ Cycle/runaway protection, three independent guards:
 - **Embeddings / vector search:** Belongs to Litsi, not the engine. The engine is purely symbolic.
 - **Real-time updates:** Engine queries run on committed data. No streaming/incremental updates.
 - **Graph visualization:** Future frontend concern, not part of query engine.
-- **Reverse-direction contradiction detection:** Implemented. Split into same-direction and reverse-direction checks, with `frozenset` dedup to avoid checking the same undirected pair twice. See §4.2.
+- **Reverse-direction contradiction detection:** Implemented. Split into same-direction and reverse-direction checks, the earlier `frozenset` dedup was removed 2026-08-28 because it dropped real contradictions. See §4.2.
 - **Path-finding full-chain citations:** `relationship_id` in §3.4 is still scalar (last hop only); array upgrade not yet applied — see §3.4 note.

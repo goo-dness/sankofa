@@ -1,8 +1,24 @@
-# Sankofa — ISSUE_LOG.md
+# Sankofa — ISSUEs.md
 
 Running log of issues found in the Sankofa code and data, written the same way as the decision log in `CONTEXT.md`. One entry per issue, dated, with a plain-word name. Newest entries go on top. An entry is written only after the issue has been checked against real data, and it is updated with the fix and the proof once it is fixed.
 
 ---
+
+### 2026-09-21 — Mosquitoes, blackflies and bats stored as disease causes
+
+**Found:** while checking Grok's vector data. The list of disease causes (`CAUSAL_AGENT_VOCABULARY` in `openalex.py`, lines 260 to 412, also read by PubMed) contains vectors, animal reservoirs and intermediate hosts, so the scan writes `causes` edges from them. Checked against `sankofa_db`: 18 `causes` edges come from such things, carrying 929 evidence in total, 16 of them at the top confidence tier. The largest are `phlebotomus` to leishmaniasis (109), `anopheles` to malaria (103, relationship 4119), `simulium` to onchocerciasis (102), `tsetse fly` to trypanosomiasis (95) and `aedes aegypti` to yellow fever (91). The rest include `mastomys natalensis` to Lassa fever, `fruit bat` and `rousettus aegyptiacus` to Marburg, `freshwater snail` to schistosomiasis and `copepod` to guinea worm. The 18 edges match the 18 terms in the causal list one-to-one, across 12 diseases, and the same organisms already sit in the vector list (line 585 onward), where they belong. Severity is high: these are false facts with some of the highest evidence in the graph, and the `causal_path` rule reads `causes` edges, so derived facts may have been built on them (not yet checked).
+
+**Checked:** none of the 75 rule-made facts depend on these 18 edges (`derivation_depth >= 1`, `derived_from` checked against all 18 relationship ids). Safe to delete without touching derived facts.
+
+**Fixed:** removed the 18 terms from `CAUSAL_AGENT_VOCABULARY` in `openalex.py` (also read by PubMed), across 11 disease entries (`malaria`, `yellow fever`, `dengue fever`, `schistosomiasis`, `onchocerciasis`, `lymphatic filariasis`, `trypanosomiasis`, `leishmaniasis`, `guinea worm`, `lassa fever`, `marburg virus`, `rift valley fever`). Ran `scripts/remove_vector_as_causes.py`, a one-time delete of the 18 relationship ids and their sources, previewed and confirmed before running.
+
+**Why:** these organisms are vectors, reservoirs or intermediate hosts, not disease-causing agents. They already exist correctly in the vector list.
+
+**Rules out:** nothing architectural. A one-time correction; the vocabulary no longer produces these edges on future scans.
+
+**Verified:** preview matched the 18 rows and 929 evidence total confirmed earlier. After delete, 0 rows remain with these ids.
+
+**Status:** FIXED on 2026-09-21.
 
 ### 2026-09-21 — fake-contradictions
 

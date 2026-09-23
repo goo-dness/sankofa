@@ -1,9 +1,11 @@
 # Sankofa Engine
 
-> *Se wo were fi na wosankofa a yenkyi.*
-> *"It is not wrong to go back for what you forgot."*
+> _Se wo were fi na wosankofa a yenkyi._
+> _"It is not wrong to go back for what you forgot."_
 
 **Sankofa Engine** is a computational knowledge platform for Africa — a system that makes African knowledge queryable, computable, and connected. Think Wolfram Alpha, but built from African data, for African researchers.
+
+**Last updated:** 2026-09-23
 
 ---
 
@@ -21,7 +23,7 @@ Sankofa is not a search engine. It is a **knowledge graph** — a structured, co
 
 A researcher can ask:
 
-> *"What pathogens cause the highest child mortality in West Africa, and what traditional compounds have been studied against them?"*
+> _"What pathogens cause the highest child mortality in West Africa, and what traditional compounds have been studied against them?"_
 
 Sankofa traverses the graph — from epidemiological data to biological entities to ethnomedicinal records — and returns a connected answer, with confidence scores showing the strength of each relationship.
 
@@ -55,39 +57,40 @@ All knowledge in Sankofa is stored as **entities** and **relationships.**
 
 Every piece of knowledge — a disease, a pathogen, a protein, a statistic, a plant compound — is an entity with:
 
-| Field | Description |
-|---|---|
-| `name` | Canonical name |
-| `domain` | epidemiology, microbiology, ethnomedicine, clinical... |
-| `entity_type` | disease, pathogen, compound, statistic, protein... |
-| `region` | Geographic scope |
-| `original_lang` | Language of origin for indigenous knowledge |
-| `expression` | Computable form (sequence, formula, value) |
-| `confidence` | 1 (Traditional), 2 (Emerging), 3 (Established) |
+| Field           | Description                                            |
+| --------------- | ------------------------------------------------------ |
+| `name`          | Canonical name                                         |
+| `domain`        | epidemiology, microbiology, ethnomedicine, clinical... |
+| `entity_type`   | disease, pathogen, compound, statistic, protein...     |
+| `region`        | Geographic scope                                       |
+| `original_lang` | Language of origin for indigenous knowledge            |
+| `expression`    | Computable form (sequence, formula, value)             |
+| `confidence`    | 1 (Traditional), 2 (Emerging), 3 (Established)         |
 
 ### Relationships
 
 Entities connect to each other through typed, scored relationships:
 
-| Relationship | Example |
-|---|---|
-| `causes` | Lassa virus → causes → Lassa fever |
-| `treats` | Artemisinin → clinically treats → Malaria |
-| `traditionally_treats` | Neem → traditionally treats → Malaria |
-| `prevalent_in` | Malaria → prevalent in → West Africa |
-| `encodes` | Gene X → encodes → surface protein |
-| `studied_by` | AJOL paper → studies → Lassa fever |
-| `corresponds_to` | Traditional remedy → corresponds to → Clinical compound |
+| Relationship           | Example                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `causes`               | Lassa virus → causes → Lassa fever                                                         |
+| `treats`               | Artemisinin → clinically treats → Malaria                                                  |
+| `traditionally_treats` | Neem → traditionally treats → Malaria                                                      |
+| `prevalent_in`         | Malaria → prevalent in → West Africa                                                       |
+| `encodes`              | Gene X → encodes → surface protein                                                         |
+| `studied_by`           | AJOL paper → studies → Lassa fever                                                         |
+| `corresponds_to`       | Traditional remedy → corresponds to → Clinical compound                                    |
+| `associated_with`      | G6PD deficiency → associated with → Malaria (neutral; direction only from a curated table) |
 
 ### Confidence Tiers
 
 Every entity and relationship carries a confidence score:
 
-| Tier | Label | Meaning |
-|---|---|---|
-| 3 | Established | Peer-reviewed, replicated, WHO sourced |
-| 2 | Emerging | Single study, preliminary findings |
-| 1 | Traditional | Ethnomedicine, oral record, community knowledge |
+| Tier | Label       | Meaning                                         |
+| ---- | ----------- | ----------------------------------------------- |
+| 3    | Established | Peer-reviewed, replicated, WHO sourced          |
+| 2    | Emerging    | Single study, preliminary findings              |
+| 1    | Traditional | Ethnomedicine, oral record, community knowledge |
 
 Tier 1 is not inferior — it is a **research lead.** Gaps between Traditional and Established evidence are original research opportunities.
 
@@ -97,33 +100,33 @@ Every entity and relationship tracks `evidence_count` — the number of independ
 
 ### Provenance
 
-Every entity has an `entity_sources` table. Every relationship has a `relationship_sources` table. Both record the exact source URL, source name, and confidence of each contributing record — a complete audit trail from graph edge back to original data.
+Every entity has an `entity_sources` table. Every relationship has a `relationship_sources` table. Both record the exact source URL, source name, author and title (both nullable), and confidence of each contributing record — a complete audit trail from graph edge back to original data.
 
 ---
 
 ## Data Sources
 
-| Source | Layer | Type | Status |
-|---|---|---|---|
-| WHO Global Health Observatory | Epidemiological | REST API | Complete |
-| OpenAlex | Research | REST API | Complete |
-| PubMed | Research | REST API | Complete |
-| ChEMBL | Pharmacological / Molecular | REST API | Complete |
+| Source                        | Layer                       | Type     | Status   |
+| ----------------------------- | --------------------------- | -------- | -------- |
+| WHO Global Health Observatory | Epidemiological             | REST API | Complete |
+| OpenAlex                      | Research                    | REST API | Complete |
+| PubMed                        | Research                    | REST API | Complete |
+| ChEMBL                        | Pharmacological / Molecular | REST API | Complete |
 
 ---
 
 ## Tech Stack
 
-| Component | Technology |
-|---|---|
-| API Framework | FastAPI |
-| Database | PostgreSQL |
-| ORM | SQLAlchemy |
-| Migrations | Alembic |
-| Validation | Pydantic |
-| HTTP Client | requests |
-| Server | Uvicorn |
-| Language | Python 3.12+ |
+| Component     | Technology   |
+| ------------- | ------------ |
+| API Framework | FastAPI      |
+| Database      | PostgreSQL   |
+| ORM           | SQLAlchemy   |
+| Migrations    | Alembic      |
+| Validation    | Pydantic     |
+| HTTP Client   | requests     |
+| Server        | Uvicorn      |
+| Language      | Python 3.12+ |
 
 ---
 
@@ -143,7 +146,8 @@ sankofa/
 │   ├── entity_sources.py
 │   ├── entity_people.py
 │   ├── relationship_sources.py
-│   └── relations_type.py
+│   ├── relations_type.py
+│   └── coverage.py           # Ingestion coverage (per disease, source, relationship type)
 ├── schemas/                  # Pydantic schemas (mirrors models)
 │   ├── entities.py
 │   ├── entity_names.py
@@ -160,19 +164,34 @@ sankofa/
 │   ├── entity_sources.py
 │   ├── relationship_sources.py
 │   └── relations_type.py
+├── computation/              # Computational Symbolic Engine (Layer 2)
+│   ├── queries.py            # Recursive CTE SQL
+│   ├── executor.py           # Query executors
+│   ├── weighing.py           # Evidence weighing (weigh_chain, weigh_derived_fact)
+│   ├── contradictions.py     # Contradiction detection
+│   ├── epistemic.py          # Known / Knowably absent / Uncharted resolution
+│   └── rules.py              # Derivation rules (causal_path)
 ├── data/
-│   ├── relationship_types.py # 62 seeded relationship types
+│   ├── relationship_types.py # 63 seeded relationship types
+│   ├── genetic_associations.py # Hand-verified genetic factor-disease pairs
 │   └── seed.py               # Ingestion orchestrators
 ├── ingestions/               # Data pipeline scripts
 │   ├── who.py                # WHO GHO ingestion
 │   ├── openalex.py           # OpenAlex ingestion
 │   ├── pubmed.py             # PubMed ingestion
-│   └── chembl.py             # ChEMBL ingestion
+│   ├── chembl.py             # ChEMBL ingestion
+│   └── curated_genetics.py   # Loads the curated genetic table
+├── scripts/                  # One-time data corrections
 ├── migrations/               # Alembic migrations
 ├── tests/
+├── alembic.ini
 ├── requirements.txt
 ├── .env.example
-└── README.md
+├── README.md
+├── CONTEXT.md                # Architecture, project state, working method
+├── DECISIONS.md              # Dated decision log
+├── ISSUES.md                 # Dated issue log
+└── SL4_ARCHITECTURE.md       # Computational Symbolic Engine design
 ```
 
 ---
@@ -218,20 +237,20 @@ uvicorn main:app --reload
 
 ### 2026
 
-| Phase | Description | Status |
-|---|---|---|
-| Phase 1 | Knowledge Engine — entities, relationships, corpus | Done |
-| Phase 2 | WHO GHO data ingestion pipeline | Done |
-| Phase 3 | OpenAlex, PubMed, ChEMBL pipelines | Done |
+| Phase   | Description                                             | Status      |
+| ------- | ------------------------------------------------------- | ----------- |
+| Phase 1 | Knowledge Engine — entities, relationships, corpus      | Done        |
+| Phase 2 | WHO GHO data ingestion pipeline                         | Done        |
+| Phase 3 | OpenAlex, PubMed, ChEMBL pipelines                      | Done        |
 | Phase 4 | Computational Symbolic Engine — recursive CTEs + Python | In Progress |
-| Phase 5 | Community + Learning Center | Planned |
-| Phase 6 | Litsi — Natural Language Layer | Planned |
+| Phase 5 | Community + Learning Center                             | Planned     |
+| Phase 6 | Litsi — Natural Language Layer                          | Planned     |
 
 ---
 
 ## The Ùmà Layer
 
-*Ùmà* is the Igala word for knowledge.
+_Ùmà_ is the Igala word for knowledge.
 
 The Ùmà layer is Sankofa's long-term ambition: a formal system that makes African indigenous knowledge **computable as reasoning** — not just stored as text. Traditional medicine, astronomical knowledge, mathematical systems, oral logic — represented in a form a machine can traverse and a researcher can query.
 
@@ -253,4 +272,4 @@ MIT License. See `LICENSE` for details.
 
 ---
 
-*Built in Nigeria. For Africa. For the world.*
+_Built in Nigeria. For Africa. For the world._
