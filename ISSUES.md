@@ -18,7 +18,7 @@ Running log of issues found in the Sankofa code and data, written the same way a
 
 **Verified:** preview matched the 18 rows and 929 evidence total confirmed earlier. After delete, 0 rows remain with these ids.
 
-**Status:** FIXED on 2026-09-21.
+**Status:** CLOSED on 2026-09-21 (vector‑as‑causes fixed, verified)
 
 ### 2026-09-21 — fake-contradictions
 
@@ -34,4 +34,4 @@ Running log of issues found in the Sankofa code and data, written the same way a
 
 **Not part of this fix:** the table has no verified rows yet, so no directed facts exist until sources are checked and added. The PubMed scan was changed the same way but has not been re-run.
 
-**Status:** FIXED on 2026-09-21.
+**Status:** CLOSED on 2026-09-21 (vector‑as‑causes fixed, verified)
