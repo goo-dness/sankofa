@@ -218,29 +218,13 @@ def execute_neighborhood(
         all_ids.update(r["relationship_ids"])
     citations = fetch_citations(db, list(all_ids))
 
-    # --- STOPGAP epistemic state for neighborhood queries ---
-    # resolve_epistemic_state() needs (db, results, source_name, relationship_type)
-    # and checks ingestion_coverage live. A neighborhood spans many relationship
-    # types, so there is no single pair to check yet. Until the real design
-    # exists, return a provisional answer that never asserts a negative finding.
-    if results:
-        # Edges came back, so those relationships are at least known to exist.
-        epistemic_state = {
-            "state": EpistemicState.KNOWN,
-            "data": results,
-            "message": "Provisional: neighborhood coverage is not resolved yet.",
-        }
-    else:
-        # Empty result: we can't tell "checked, found nothing" from "never looked".
-        # UNCHARTED is the safe side because it never claims a negative finding.
-        epistemic_state = {
-            "state": EpistemicState.UNCHARTED,
-            "data": [],
-            "message": "Provisional: an empty neighborhood can't be classified yet.",
-        }
-
+    # No aggregate epistemic_state here, deliberately. Epistemic state answers
+    # a claim ("was this specific relationship checked for and not found, or
+    # never checked?"). A neighborhood query only lists edges that exist; it
+    # never asserts absence of anything beyond what it returns. The honesty
+    # commitment lives per-edge (confidence/evidence_count/citations, already
+    # present on each row), not in an aggregate field here.
     return {
-        "epistemic_state": epistemic_state,  # ITEM 4 — not fixed yet, deliberately left as-is
         "query_results": results,
         "citations": citations,
         "contradictions": detect_contradictions(results),
