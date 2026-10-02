@@ -1,5 +1,6 @@
 from sqlalchemy import text
 
+# Single‑hop queries
 SINGLE_HOP_QUERY = text("""
     SELECT
         e_from.id AS from_id,
@@ -18,6 +19,62 @@ SINGLE_HOP_QUERY = text("""
     JOIN relationship_types rt ON er.relationship_id = rt.id
     WHERE e_from.name = :source_name
         AND rt.name = :relationship_type
+    """)
+
+# Relationship‑type‑constrained path query for verification mode
+# Walks forward from ``source_id`` to ``target_id`` while only allowing
+# relationship types listed in ``allowed`` and ensures that the claimed
+# ``relationship_type`` appears at least once (tracked by ``claimed_seen``).
+# ``max_depth`` caps the recursion depth.
+CONSTRAINT_QUERY = text("""
+    WITH RECURSIVE traversal AS (
+    --- Anchor: first hop from source, allowed types only
+    SELECT
+        er.from_entity_id,
+        er.to_entity_id,
+        er.confidence,
+        er.evidence_count,
+        1 AS depth,
+        ARRAY[er.from_entity_id, er.to_entity_id] AS path,
+        ARRAY[er.id] AS relationship_ids,
+        ARRAY[rt.name] AS rel_names,
+        CASE WHEN rt.name = :claimed THEN 1 ELSE 0 END AS claimed_seen
+    FROM entity_relations er
+    JOIN relationship_types rt ON er.relationship_id = rt.id
+    WHERE er.from_entity_id = :source_id
+        AND rt.name = ANY(:allowed)
+
+    UNION ALL
+
+    --- Recursive: one more allowed hop; running max confidence/evidence; no cycles
+    SELECT
+        er.from_entity_id,
+        er.to_entity_id,
+        GREATEST(t.confidence, er.confidence) AS confidence,
+        GREATEST(t.evidence_count, er.evidence_count) AS evidence_count,
+        t.depth + 1,
+        t.path || er.to_entity_id,
+        t.relationship_ids || er.id,
+        t.rel_names || rt.name,
+        t.claimed_seen + CASE WHEN rt.name = :claimed THEN 1 ELSE 0 END
+    FROM entity_relations er
+    JOIN relationship_types rt ON er.relationship_id = rt.id
+    JOIN traversal t ON er.from_entity_id = t.to_entity_id
+    WHERE rt.name = ANY(:allowed)
+        AND t.depth < :max_depth
+        AND er.to_entity_id != ALL(t.path)
+    )
+    SELECT
+        t.path,
+        t.relationship_ids,
+        t.rel_names AS relationship_path,
+        t.confidence,
+        t.evidence_count,
+        t.depth
+    FROM traversal t
+    WHERE t.to_entity_id = :target_id
+        AND t.claimed_seen > 0
+        AND t.depth <= :max_depth
     """)
 
 SINGLE_HOP_BACKWARD_QUERY = text("""
@@ -147,12 +204,9 @@ TWO_HOP_BACKWARD_QUERY = text("""
 NEIGHBORHOOD_QUERY = text("""
     WITH RECURSIVE neighborhood AS (
         -- ANCHOR: every edge touching the start entity, one row PER EDGE.
-        -- (The old version used DISTINCT ON, which kept one arbitrary edge per
-        -- neighbor and silently deleted the rest.)
         SELECT
             er.from_entity_id,
             er.to_entity_id,
-            -- the entity on the other end of this edge from the start entity
             CASE WHEN er.from_entity_id = :entity_id
                 THEN er.to_entity_id
                 ELSE er.from_entity_id
@@ -165,8 +219,6 @@ NEIGHBORHOOD_QUERY = text("""
             END AS direction,
             er.confidence,
             er.evidence_count,
-            -- path = every entity visited so far: the start entity, then this neighbor.
-            -- Including the neighbor stops a self-loop from re-walking itself.
             ARRAY[
                 CASE WHEN er.from_entity_id = :entity_id
                     THEN er.from_entity_id
@@ -183,12 +235,8 @@ NEIGHBORHOOD_QUERY = text("""
         WHERE er.from_entity_id = :entity_id
             OR er.to_entity_id = :entity_id
 
-        -- UNION ALL, not UNION: UNION would deduplicate identical rows and can
-        -- hide legitimate parallel edges between the same two entities.
         UNION ALL
 
-        -- RECURSIVE STEP: walk one more edge out from each neighbor found so far.
-        -- Note: "direction" here is relative to n.connected_id, not the start entity.
         SELECT
             er.from_entity_id,
             er.to_entity_id,
@@ -216,7 +264,6 @@ NEIGHBORHOOD_QUERY = text("""
         )
         JOIN relationship_types rt ON er.relationship_id = rt.id
         WHERE n.depth < :max_depth
-            -- cycle guard: never step onto an entity already on this path
             AND CASE WHEN er.from_entity_id = n.connected_id
                     THEN er.to_entity_id
                     ELSE er.from_entity_id
@@ -235,13 +282,9 @@ NEIGHBORHOOD_QUERY = text("""
         n.depth
     FROM neighborhood n
     JOIN entities e ON n.connected_id = e.id
-    -- Nearest neighbors first, so a truncated result keeps the closest facts.
-    -- The final key makes the order deterministic (the old one wasn't).
     ORDER BY n.depth, e.name, n.relationship_ids
-    -- Hard row cap, passed in from the executor.
     LIMIT :row_limit
     """)
-
 
 PATH_QUERY = text("""
     WITH RECURSIVE path_search AS (

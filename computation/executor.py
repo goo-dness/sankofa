@@ -3,6 +3,7 @@ from collections import defaultdict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from computation.allowed_companions import ALLOWED_COMPANIONS
 from computation.contradictions import detect_contradictions
 from computation.epistemic import (
     EpistemicState,
@@ -11,6 +12,7 @@ from computation.epistemic import (
     resolve_epistemic_state,
 )
 from computation.queries import (
+    CONSTRAINT_QUERY,
     NEIGHBORHOOD_QUERY,
     PATH_QUERY,
     SINGLE_HOP_BACKWARD_QUERY,
@@ -241,6 +243,10 @@ def execute_path_query(
     end_entity_id: int,
     max_depth: int = 3,
 ) -> dict:
+    """Execute a simple shortest‑path query.
+    This function is unchanged from the original implementation – it returns
+    a single best path (if any) without per‑hop citations or contradictions.
+    """
     rows = (
         db.execute(
             PATH_QUERY,
@@ -257,12 +263,6 @@ def execute_path_query(
     results = [dict(r) for r in rows]
     found = len(results) > 0
 
-    # contradictions/citations/chain_weight are intentionally empty:
-    # PATH_QUERY returns one collapsed best path, not competing edges
-    # per entity pair, so contradiction detection isn't meaningful
-    # here yet without restructuring into per-hop rows (deferred).
-    # PATH_QUERY also doesn't expose confidence/evidence_count per
-    # row, so aggregate_confidence/weigh_chain can't run on it as-is.
     epistemic_state = {
         "state": EpistemicState.KNOWN if found else EpistemicState.KNOWABLY_ABSENT,
         "data": results,
@@ -274,6 +274,113 @@ def execute_path_query(
         "epistemic_state": epistemic_state,
         "query_results": results,
         "citations": {},
+        "contradictions": [],
+        "chain_weight": None,
+    }
+
+
+# New executor: relationship‑type‑constrained query for verification mode
+def execute_constraint_query(
+    db: Session,
+    source_name: str,
+    target_name: str,
+    relationship_type: str,
+    max_depth: int = 3,
+) -> dict:
+    """Find a path from *source* → *target* whose hops are limited to
+    relationship types that are semantically allowed for the claimed
+    ``relationship_type``. The path must contain the claimed type at least
+    once. Returns a single best path (shortest depth, then highest confidence,
+    then highest evidence count) together with a concise epistemic verdict.
+    """
+
+    # Resolve the two entity IDs
+    source_row = (
+        db.execute(
+            text("SELECT id FROM entities WHERE name = :name"), {"name": source_name}
+        )
+        .mappings()
+        .first()
+    )
+    target_row = (
+        db.execute(
+            text("SELECT id FROM entities WHERE name = :name"), {"name": target_name}
+        )
+        .mappings()
+        .first()
+    )
+
+    if not source_row or not target_row:
+        return {
+            "epistemic_state": {
+                "state": EpistemicState.UNCHARTED,
+                "message": "Source or target entity not found.",
+            },
+            "query_results": [],
+            "citations": {},
+            "contradictions": [],
+            "chain_weight": None,
+        }
+
+    source_id = source_row["id"]
+    target_id = target_row["id"]
+
+    # Allowed companion relationship types (fallback to the claimed type)
+    allowed = ALLOWED_COMPANIONS.get(relationship_type, [relationship_type])
+
+    # Run the constrained path CTE
+    rows = (
+        db.execute(
+            CONSTRAINT_QUERY,
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "allowed": allowed,
+                "claimed": relationship_type,
+                "max_depth": max_depth,
+            },
+        )
+        .mappings()
+        .all()
+    )
+
+    if not rows:
+        # No path – decide between knowably absent and uncharted via coverage
+        return {
+            "epistemic_state": {
+                "state": EpistemicState.UNCHARTED,
+                "message": "No supporting part found, absence not established by coverage.",
+            },
+            "query_results": [],
+            "citations": {},
+            "contradictions": [],
+            "chain_weight": None,
+        }
+
+    # Choose the best path: shortest depth, then highest confidence, then highest evidence
+    best_row = min(
+        rows,
+        key=lambda r: (
+            r["depth"],
+            -r.get("confidence", 0),
+            -r.get("evidence_count", 0),
+        ),
+    )
+    best = dict(best_row)
+
+    best["from_name"] = source_name
+    best["to_name"] = target_name
+    # Gather citations only for the selected path
+    path_ids = set(best.get("relationship_ids", []))
+    citations = fetch_citations(db, list(path_ids))
+
+    # Epistemic state is simply Known (since a path exists)
+    epistemic_state = {"state": EpistemicState.KNOWN}
+
+    return {
+        "epistemic_state": epistemic_state,
+        "query_results": [best],
+        "citations": citations,
         "contradictions": [],
         "chain_weight": None,
     }
