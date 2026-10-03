@@ -345,11 +345,10 @@ def execute_constraint_query(
     )
 
     if not rows:
-        # No path – decide between knowably absent and uncharted via coverage
         return {
             "epistemic_state": {
                 "state": EpistemicState.UNCHARTED,
-                "message": "No supporting part found, absence not established by coverage.",
+                "message": "No supporting path found, absence not established by coverage.",
             },
             "query_results": [],
             "citations": {},
