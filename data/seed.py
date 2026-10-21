@@ -17,6 +17,12 @@ from ingestions.who import (
     load_to_database,
     transform_to_entities,
 )
+from ingestions.world_bank import (
+    TARGET_INDICATORS,
+    extract_world_bank_data,
+    load_to_database as load_wb,
+    transform_to_entities as transform_wb,
+)
 from models.coverage import IngestionCoverage
 from models.relations_type import RelationshipTypes
 
@@ -229,6 +235,53 @@ def run_chembl():
         print("ChEMBL ingestion complete.")
 
 
+def run_world_bank():
+    print("Starting World Bank ingestion pipeline...")
+    for indicator_code in TARGET_INDICATORS:
+        print(f" Processing indicator: {indicator_code}")
+
+        # --- Step 1: Extract data ---
+        print(f" Extracting raw data: {indicator_code} ...")
+        try:
+            raw_wb_data, extract_succeeded = extract_world_bank_data(indicator_code)
+            if not extract_succeeded or len(raw_wb_data) == 0:
+                disease_name = TARGET_INDICATORS[indicator_code][0]
+                if extract_succeeded:
+                    print(f" No data extracted for {indicator_code} -- skipping load.")
+                    with get_db() as db_session:
+                        # Record coverage for the specific target relationship
+                        rel_type = TARGET_INDICATORS[indicator_code][1]
+                        record_coverage(db_session, "healthcare", disease_name, "World Bank", rel_type)
+                continue
+        except Exception as e:
+            print(f" Error during extraction for {indicator_code}: {e}")
+            continue
+
+        # --- Step 2: Transform data ---
+        print(f" Transforming data for {indicator_code}...")
+        try:
+            transformed_entities, transformed_relationships, transformed_sources = transform_wb(
+                raw_wb_data, indicator_code
+            )
+        except Exception as e:
+            print(f" Error during transformation for {indicator_code}: {e}")
+            continue
+
+        # --- Step 3: Load to database ---
+        print(f" Loading transformed data for {indicator_code} to database...")
+        with get_db() as db_session:
+            try:
+                load_wb(db_session, transformed_entities, transformed_relationships, transformed_sources)
+                disease_name = TARGET_INDICATORS[indicator_code][0]
+                touched_relationship_types = set(r["relationship_name"] for r in transformed_relationships)
+                for rel_type in touched_relationship_types:
+                    record_coverage(db_session, "healthcare", disease_name, "World Bank", rel_type)
+            except Exception as e:
+                print(f" Error during database load for {indicator_code}: {e}")
+    print("World Bank ingestion pipeline finished.")
+
+
+
 def run_curated_genetics():
     run_curated_genetics_ingestion()
     # Curated rows are hand-checked facts, not a scan of every disease.
@@ -237,11 +290,11 @@ def run_curated_genetics():
     # disease, but this table only covers pairs someone verified.
     # Coverage for those two types stays UNCHARTED. That is the honest answer.
 
-
 if __name__ == "__main__":
     seed_relationship_types()
     run_who_ingestion()
     run_openalex()
     run_pubmed()
     run_chembl()
+    run_world_bank()
     run_curated_genetics()

@@ -52,14 +52,11 @@ You may help me with:
 - Documentation
 - Mechanical project inspection
 
-You must **not write, generate, or modify actual source code**.
-
-I write the implementation myself.
+You must **not write, generate, or modify actual code unless asked to do so.
 
 You may explain how something should work, propose an algorithm, produce
 pseudocode, identify a bug, explain why an implementation behaves incorrectly,
-or suggest what should be tested. I will translate that reasoning into actual
-code.
+or suggest what should be tested.
 
 You may inspect existing source code and reason about it, but inspection does
 not grant permission to modify it.
@@ -106,32 +103,6 @@ decision is required, stop at that boundary and bring the decision back to me.
 Do not silently introduce the decision through reasoning, pseudocode, or project
 changes.
 
-Our workflow is:
-
-I DEFINE
-↓
-YOU EXPLORE
-↓
-YOU CHALLENGE
-↓
-I DECIDE
-↓
-YOU SPECIFY / PRODUCE PSEUDOCODE
-↓
-I IMPLEMENT
-↓
-WE REVIEW
-↓
-REAL TEST
-↓
-OBSERVE
-↓
-DEBUG
-↓
-I VERIFY
-↓
-STATE UPDATED
-
 ## 4. DECISIONS.md
 
 `DECISIONS.md` is the canonical record of substantial Sankofa decisions.
@@ -161,8 +132,6 @@ Do not create entries for trivial implementation choices.
 Use this format:
 
 ### YYYY-MM-DD — short descriptive title
-
-What exists now.
 
 **DECIDED**
 
@@ -293,33 +262,6 @@ If the current implementation appears to diverge from the documented
 architecture, identify and investigate the divergence rather than silently
 changing either one.
 
-## 8. Implementation
-
-I write all actual source code for Sankofa.
-
-Your role is to help me reason about what should be implemented, not to
-implement it yourself.
-
-The workflow is:
-
-I DEFINE THE MECHANISM
-↓
-YOU EXPLORE AND CHALLENGE IT
-↓
-YOU PRODUCE PSEUDOCODE / SPECIFICATION
-↓
-I IMPLEMENT THE CODE
-↓
-YOU INSPECT AND REVIEW MY IMPLEMENTATION
-↓
-TESTS / REAL DATA EVALUATE IT
-↓
-YOU HELP ANALYZE FAILURES
-↓
-I MODIFY THE CODE
-↓
-I ACCEPT OR REJECT THE RESULT
-
 You may inspect existing source code and explain:
 
 - What it currently does
@@ -339,13 +281,6 @@ You may produce:
 - Test cases and test strategies
 - Invariants
 - Specifications
-
-However, pseudocode must remain pseudocode.
-
-Do not provide a finished implementation in Python, C, SQL, or another
-programming language for me to use as source code.
-
-Do not edit, rewrite, patch, or create source-code files.
 
 If I show you an implementation and ask for help, reason from the implementation
 I provided and guide me toward the correction rather than replacing it with
