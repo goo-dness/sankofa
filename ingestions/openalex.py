@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -685,6 +686,63 @@ VECTOR_TRANSMISSION_VOCABULARY = {
 }
 
 
+GENETIC_RELATIONSHIP_PHRASES = {
+    "protective_against": [
+        "protective against",
+        "protection against",
+        "protects against",
+        "protective effect against",
+        "reduced susceptibility to",
+        "decreased susceptibility to",
+        "lower susceptibility to",
+    ],
+    "predisposes_to": [
+        "predisposes to",
+        "predisposition to",
+        "genetic predisposition to",
+        "susceptibility to",
+        "genetic susceptibility to",
+    ],
+    "risk_factor_for": [
+        "risk factor for",
+        "increased risk of",
+        "higher risk of",
+        "greater risk of",
+        "increased risk for",
+    ],
+    "resistant_to": [
+        "resistant to",
+        "resistance to",
+        "confers resistance to",
+    ],
+}
+
+
+def classify_genetic_relationships(abstract_text: str, genetic_term: str) -> list[str]:
+    """Identify relationship cues near a genetic factor in an abstract."""
+    found = set()
+    term_pattern = re.compile(re.escape(genetic_term), re.IGNORECASE)
+    sentences = re.split(r"(?<=[.!?])\s+", abstract_text)
+
+    for sentence in sentences:
+        term_match = term_pattern.search(sentence)
+        if not term_match:
+            continue
+
+        start = max(0, term_match.start() - 150)
+        end = min(len(sentence), term_match.end() + 250)
+        context = sentence[start:end].lower()
+
+        for relationship, cues in GENETIC_RELATIONSHIP_PHRASES.items():
+            if any(cue in context for cue in cues):
+                found.add(relationship)
+
+    if not found:
+        return ["associated_with"]
+
+    return sorted(found)
+
+
 def normalize_organism_name(raw_name: str) -> str:
     lowered = raw_name.lower().strip()
     return ORGANISM_NAME_MAP.get(lowered, lowered)
@@ -1037,22 +1095,23 @@ def transform(
                     }
                 )
 
-                relationships.append(
-                    {
-                        "from_entity_name": actual_term,
-                        "from_entity_domain": "healthcare",
-                        "to_entity_name": disease_name,
-                        "to_entity_domain": "healthcare",
-                        "relationship": "associated_with",
-                        "confidence": confidence,
-                        "context": paper.get("title"),
-                        "source_url": paper.get("doi")
-                        if paper.get("doi")
-                        else paper.get("id"),
-                        "source_author": first_author,
-                        "source_title": paper.get("title", " "),
-                    }
-                )
+                for relationship_name in classify_genetic_relationships(
+                    abstract_text, actual_term
+                ):
+                    relationships.append(
+                        {
+                            "from_entity_name": actual_term,
+                            "from_entity_domain": "healthcare",
+                            "to_entity_name": disease_name,
+                            "to_entity_domain": "healthcare",
+                            "relationship": relationship_name,
+                            "confidence": confidence,
+                            "context": paper.get("title"),
+                            "source_url": (paper.get("doi") or paper.get("id")),
+                            "source_author": first_author,
+                            "source_title": paper.get("title", " "),
+                        }
+                    )
 
             found_vector_terms = []
             for term in VECTOR_TRANSMISSION_VOCABULARY.get(disease_name, []):
@@ -1140,6 +1199,9 @@ def load(entities, relationships, sources, db_session):
             "predisposes_to",
             "vector_of",
             "transmitted_by",
+            "risk_factor_for",
+            "associated_with",
+            "resistant_to",
         ]:
             if rel_name not in relationship_type_name_to_id:
                 new_rel_type = RelationshipTypes(name=rel_name)
@@ -1310,10 +1372,12 @@ def load(entities, relationships, sources, db_session):
         # ---Stage 5: commit everything ---
         db_session.commit()
         print("Load complete")
+        return True
 
     except Exception as e:
         print(f"Load failed: {e}")
         db_session.rollback()
+        return False
     finally:
         db_session.close()
 
@@ -1335,21 +1399,24 @@ def run_openalex_ingestion(disease_name):
             print(
                 f"No records found for {disease_name} --- extraction FAILED, this is NOT a verified absence."
             )
-        return extract_succeeded, set()
+        return extract_succeeded, extract_succeeded, set()
 
     entities, relationships, sources = transform(raw_records, disease_name)
     if entities is None or relationships is None or sources is None:
         print(f"Error: Transform stage returned None for {disease_name}")
-        return False, set()
+        return False, False, set()
     db_session = SessionLocal()
 
     try:
-        load(entities, relationships, sources, db_session)
+        load_succeeded = load(entities, relationships, sources, db_session)
     except Exception as e:
         print(f"Error during load stage; {e}")
+        load_succeeded = False
     finally:
         db_session.close()
 
-    touched_relationship_types = set(r["relationship"] for r in relationships)
+    touched_relationship_types = {
+        relationship["relationship"] for relationship in relationships
+    }
     print(f"Integration complete for:  {disease_name}")
-    return extract_succeeded, touched_relationship_types
+    return extract_succeeded, load_succeeded, touched_relationship_types

@@ -179,10 +179,10 @@ def run_who_ingestion():
 def run_openalex():
     print("Starting OpenAlex ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        extract_succeeded, touched_relationship_types = run_openalex_ingestion(
-            disease_name
+        extract_succeeded, load_succeeded, touched_relationship_types = (
+            run_openalex_ingestion(disease_name)
         )
-        if extract_succeeded:
+        if extract_succeeded and load_succeeded:
             with get_db() as db_session:
                 for rel_type in touched_relationship_types:
                     record_coverage(
@@ -190,7 +190,7 @@ def run_openalex():
                     )
         else:
             print(
-                f"Skipping coverage for {disease_name} -- OpenAlex extraction did not succeeded"
+                f"Skipping coverage for {disease_name} -- OpenAlex extraction or database load failed"
             )
     print("OpenAlex ingestion pipeline finished.")
 
@@ -198,10 +198,10 @@ def run_openalex():
 def run_pubmed():
     print("Starting PubMed ingestion pipeline...")
     for disease_name in DISEASE_VOCABULARY:
-        extract_succeeded, touched_relationship_types = run_pubmed_ingestion(
-            disease_name
+        extract_succeeded, load_succeeded, touched_relationship_types = (
+            run_pubmed_ingestion(disease_name)
         )
-        if extract_succeeded:
+        if extract_succeeded and load_succeeded:
             with get_db() as db_session:
                 for rel_type in touched_relationship_types:
                     record_coverage(
@@ -209,7 +209,7 @@ def run_pubmed():
                     )
         else:
             print(
-                f"Skipping coverage for {disease_name} -- PubMed did not record the extraction"
+                f"Skipping coverage for {disease_name} -- PubMed extraction or database load failed"
             )
     print("PubMed ingestion pipeline finished.")
 

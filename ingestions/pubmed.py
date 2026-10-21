@@ -17,9 +17,11 @@ from ingestions.openalex import (
     DISEASE_VOCABULARY,
     GENETIC_FACTOR_ENTITY_TYPE,
     GENETIC_PROTECTIVE_VOCABULARY,
+    GENETIC_RELATIONSHIP_PHRASES,
     ORGANISM_NAME_MAP,
     TREATMENT_VOCABULARY,
     VECTOR_TRANSMISSION_VOCABULARY,
+    classify_genetic_relationships,
     determine_entity_type,
     filter_redundant_causal_agent_matches,
     normalize_organism_name,
@@ -632,21 +634,24 @@ def transform(raw_records, disease_name):
                     }
                 )
 
-                relationships.append(
-                    {
-                        "from_entity_name": actual_term,
-                        "from_entity_domain": "healthcare",
-                        "to_entity_name": disease_name,
-                        "to_entity_domain": "healthcare",
-                        "relationship": "associated_with",
-                        "confidence": confidence_tier_for_this_paper,
-                        "context": ArticleTitle_TEXT,
-                        "source_url": paper_source_url,
-                        "source_name": "PubMed",
-                        "source_author": first_author,
-                        "source_title": ArticleTitle_TEXT,
-                    }
-                )
+                for relationship_name in classify_genetic_relationships(
+                    concatenated_abstract_string, actual_term
+                ):
+                    relationships.append(
+                        {
+                            "from_entity_name": actual_term,
+                            "from_entity_domain": "healthcare",
+                            "to_entity_name": disease_name,
+                            "to_entity_domain": "healthcare",
+                            "relationship": relationship_name,
+                            "confidence": confidence_tier_for_this_paper,
+                            "context": ArticleTitle_TEXT,
+                            "source_url": paper_source_url,
+                            "source_name": "PubMed",
+                            "source_author": first_author,
+                            "source_title": ArticleTitle_TEXT,
+                        }
+                    )
 
                 # --- Vector / Transmission matching ---
             found_vector_terms = []
@@ -733,7 +738,10 @@ def load(entities, relationships, sources, db_session):
             "protective_against",
             "predisposes_to",
             "vector_of",
-            "treatment_by",
+            "transmitted_by",
+            "risk_factor_for",
+            "associated_with",
+            "resistant_to",
         ]:
             if rel_name not in relationship_type_name_to_id:
                 new_rel_type = RelationshipTypes(name=rel_name)
@@ -921,10 +929,11 @@ def load(entities, relationships, sources, db_session):
                 db_session.add(new_relationship_source_entry)
         db_session.commit()
         print("Load complete")
-
+        return True
     except Exception as e:
         print(f"Load failed: {e}")
         db_session.rollback()
+        return False
     finally:
         db_session.close()
 
@@ -943,17 +952,25 @@ def run_pubmed_ingestion(disease_name):
             print(
                 f"No records found for {disease_name}--- extraction FAILED, this is NOT a verified absence, do not treat as checked"
             )
-        return extract_succeeded, set()
+        return extract_succeeded, extract_succeeded, set()
     entities, relationships, sources = transform(raw_records, disease_name)
+
+    if entities is None or relationships is None or sources is None:
+        print(f"Error: Transform stage returned None for {disease_name}")
+        return False, False, set()
+
     db_session = SessionLocal()
 
     try:
-        load(entities, relationships, sources, db_session)
+        load_succeeded = load(entities, relationships, sources, db_session)
     except Exception as e:
         print(f"Error during load stage for {disease_name}: {e}")
+        load_succeeded = False
     finally:
         db_session.close()
 
-    touched_relationship_types = set(r["relationship"] for r in relationships)
+    touched_relationship_types = {
+        relationship["relationship"] for relationship in relationships
+    }
     print(f"Ingestion complete for: {disease_name}")
-    return extract_succeeded, touched_relationship_types
+    return extract_succeeded, load_succeeded, touched_relationship_types
