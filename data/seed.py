@@ -20,7 +20,11 @@ from ingestions.who import (
 from ingestions.world_bank import (
     TARGET_INDICATORS,
     extract_world_bank_data,
+)
+from ingestions.world_bank import (
     load_to_database as load_wb,
+)
+from ingestions.world_bank import (
     transform_to_entities as transform_wb,
 )
 from models.coverage import IngestionCoverage
@@ -251,7 +255,13 @@ def run_world_bank():
                     with get_db() as db_session:
                         # Record coverage for the specific target relationship
                         rel_type = TARGET_INDICATORS[indicator_code][1]
-                        record_coverage(db_session, "healthcare", disease_name, "World Bank", rel_type)
+                        record_coverage(
+                            db_session,
+                            "healthcare",
+                            disease_name,
+                            "World Bank",
+                            rel_type,
+                        )
                 continue
         except Exception as e:
             print(f" Error during extraction for {indicator_code}: {e}")
@@ -260,8 +270,8 @@ def run_world_bank():
         # --- Step 2: Transform data ---
         print(f" Transforming data for {indicator_code}...")
         try:
-            transformed_entities, transformed_relationships, transformed_sources = transform_wb(
-                raw_wb_data, indicator_code
+            transformed_entities, transformed_relationships, transformed_sources = (
+                transform_wb(raw_wb_data, indicator_code)
             )
         except Exception as e:
             print(f" Error during transformation for {indicator_code}: {e}")
@@ -271,15 +281,23 @@ def run_world_bank():
         print(f" Loading transformed data for {indicator_code} to database...")
         with get_db() as db_session:
             try:
-                load_wb(db_session, transformed_entities, transformed_relationships, transformed_sources)
+                load_wb(
+                    db_session,
+                    transformed_entities,
+                    transformed_relationships,
+                    transformed_sources,
+                )
                 disease_name = TARGET_INDICATORS[indicator_code][0]
-                touched_relationship_types = set(r["relationship_name"] for r in transformed_relationships)
+                touched_relationship_types = set(
+                    r["relationship_name"] for r in transformed_relationships
+                )
                 for rel_type in touched_relationship_types:
-                    record_coverage(db_session, "healthcare", disease_name, "World Bank", rel_type)
+                    record_coverage(
+                        db_session, "healthcare", disease_name, "World Bank", rel_type
+                    )
             except Exception as e:
                 print(f" Error during database load for {indicator_code}: {e}")
     print("World Bank ingestion pipeline finished.")
-
 
 
 def run_curated_genetics():
@@ -289,6 +307,7 @@ def run_curated_genetics():
     # for protective_against / predisposes_to would claim we looked at every
     # disease, but this table only covers pairs someone verified.
     # Coverage for those two types stays UNCHARTED. That is the honest answer.
+
 
 if __name__ == "__main__":
     seed_relationship_types()
